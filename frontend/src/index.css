@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-gray-950 text-gray-100 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-700 rounded-full;
+  }
+}
+
+@layer components {
+  .panel-advocate {
+    @apply border border-advocate-border bg-advocate-light/5;
+  }
+  .panel-critic {
+    @apply border border-critic-border bg-critic-light/5;
+  }
+  .panel-judge {
+    @apply border border-judge-border bg-judge-light/5;
+  }
+
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full animate-pulse-dot;
+  }
+
+  .citation-card {
+    @apply text-xs bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mt-1;
+  }
+}
