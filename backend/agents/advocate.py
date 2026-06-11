@@ -8,9 +8,9 @@ search_node:  Uses web search to gather evidence FOR the topic.
 argue_node:   Reasons over search results, builds structured argument,
               streams tokens back via Django Channels.
 """
+
 import json
-import re
-from typing import TypedDict, Annotated, List, Optional
+from typing import TypedDict, List, Optional
 from django.conf import settings
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
@@ -18,79 +18,66 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 
-# ── State schema ──────────────────────────────────────────────────────────────
-
 class AdvocateState(TypedDict):
     debate_id: str
     topic: str
-    search_results: List[dict]          # [{url, title, snippet}]
-    argument: str                        # Final argument text
-    citations: List[dict]               # [{index, url, title, snippet}]
+    search_results: List[dict]
+    argument: str
+    citations: List[dict]
     error: Optional[str]
     critic_argument: Optional[str]
+    previous_rounds: List[dict]   # [{role, round, text}]
     is_rebuttal: bool
+    round_number: int
 
 
-# ── Tools ─────────────────────────────────────────────────────────────────────
-
-# LangChain automatically picks up settings.TAVILY_API_KEY if passed,
-# or you can pass it directly via the kwargs initialization.
 search_tool = TavilySearchResults(
-    max_results=5, 
-    output_format="list", 
+    max_results=5,
+    output_format="list",
     search_depth="advanced",
-    tavily_api_key=settings.TAVILY_API_KEY
+    tavily_api_key=settings.TAVILY_API_KEY,
 )
 
 
 def _parse_search_results(raw) -> List[dict]:
-    """Normalise Tavily results into [{url, title, snippet}]."""
     results = []
-    
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
         except Exception:
             return []
-            
     if isinstance(raw, list):
         for item in raw:
-            # Tavily returns 'url' and 'content'. 
-            # We map 'content' -> 'snippet' to preserve your existing state schema.
             results.append({
-                "url": item.get("url", ""),
-                "title": item.get("title", "Web Source"), # Tavily list wrapper sometimes omits titles
-                "snippet": item.get("content", ""),       # <-- CHANGED FROM 'body'/'snippet'
+                "url":     item.get("url", ""),
+                "title":   item.get("title", "Web Source"),
+                "snippet": item.get("content", ""),
             })
     return results
 
 
-# ── Nodes ─────────────────────────────────────────────────────────────────────
-
 def search_node(state: AdvocateState) -> AdvocateState:
-    """Search the web for evidence supporting the topic."""
     from agents.utils import push_status, push_citation
 
-    topic = state["topic"]
-    debate_id = state["debate_id"]
+    topic      = state["topic"]
+    debate_id  = state["debate_id"]
+    round_num  = state.get("round_number", 1)
     is_rebuttal = state.get("is_rebuttal", False)
 
     if is_rebuttal:
         query = f"evidence supporting {topic} counter-arguments rebuttal"
-        push_status(debate_id, "advocate", "Preparing rebuttal...")
+        push_status(debate_id, "advocate", f"Round {round_num} – Searching for rebuttal evidence…")
     else:
         query = f"arguments in favor of: {topic}"
-        push_status(debate_id, "advocate", "Searching the web...")
+        push_status(debate_id, "advocate", f"Round {round_num} – Searching for evidence…")
 
     try:
-        # LangChain tools expect a dict context or raw string query passed to invoke()
         raw = search_tool.invoke({"query": query})
         results = _parse_search_results(raw)
     except Exception as e:
         results = []
-        push_status(debate_id, "advocate", f"Search failed: {str(e)}. Reasoning from knowledge...")
+        push_status(debate_id, "advocate", f"Search failed, reasoning from knowledge…")
 
-    # Push citations to client as they're found
     citations = []
     for i, r in enumerate(results[:4], start=1):
         push_citation(debate_id, "advocate", i, r["url"], r["title"], r["snippet"])
@@ -100,62 +87,70 @@ def search_node(state: AdvocateState) -> AdvocateState:
 
 
 def argue_node(state: AdvocateState) -> AdvocateState:
-    """Build the argument using LLM, streaming tokens to WebSocket."""
     from agents.utils import push_status, push_token, push_done
 
-    debate_id = state["debate_id"]
-    topic = state["topic"]
-    search_results = state.get("search_results", [])
-    is_rebuttal = state.get("is_rebuttal", False)
+    debate_id       = state["debate_id"]
+    topic           = state["topic"]
+    search_results  = state.get("search_results", [])
+    is_rebuttal     = state.get("is_rebuttal", False)
     critic_argument = state.get("critic_argument", "")
+    previous_rounds = state.get("previous_rounds", [])
+    round_num       = state.get("round_number", 1)
 
-    push_status(debate_id, "advocate", "Building argument..." if not is_rebuttal else "Writing rebuttal...")
+    push_status(debate_id, "advocate", f"Round {round_num} – Writing argument…")
 
-    # Format search context
     context = "\n\n".join([
         f"[{i+1}] {r['title']}\n{r['snippet']}\nSource: {r['url']}"
         for i, r in enumerate(search_results[:4])
     ])
 
+    history_text = ""
+    if previous_rounds:
+        history_text = "\n\n".join([
+            f"=== Round {r['round']} — {r['role'].title()} ===\n{r['text']}"
+            for r in previous_rounds
+        ])
+
     if is_rebuttal:
         system_prompt = """You are a skilled debater arguing IN FAVOR of the given topic.
-You are in the REBUTTAL round. The Critic has made their argument against the topic.
-Your job is to:
-1. Directly counter the Critic's specific points with evidence
-2. Reinforce your strongest pro arguments
-3. Cite your sources using [1], [2], [3] notation inline
-
-Keep your rebuttal focused and under 200 words. Be sharp and specific."""
+This is a REBUTTAL round. The Critic has attacked your position.
+Your job:
+1. Directly counter each of the Critic's specific points with evidence
+2. Reinforce your strongest arguments from earlier rounds
+3. Cite sources using [1], [2], [3] notation inline
+Keep your rebuttal under 220 words. Be sharp, specific, and don't repeat yourself."""
 
         user_prompt = f"""Topic: {topic}
+
+Debate history so far:
+{history_text}
 
 Critic's argument you must rebut:
 {critic_argument}
 
-Supporting evidence from web search:
-{context if context else "Use your knowledge to rebut."}
+Supporting evidence:
+{context or 'Use your knowledge.'}
 
-Write a concise, sharp rebuttal that directly addresses the Critic's points."""
+Write a focused rebuttal that directly counters the Critic's points."""
 
     else:
         system_prompt = """You are a skilled debater arguing IN FAVOR of the given topic.
-Your job is to:
+Your job:
 1. Make 2-3 strong arguments supporting the topic
-2. Cite your web search sources using [1], [2], [3] notation inline
+2. Cite sources using [1], [2], [3] notation inline
 3. Be persuasive but grounded in evidence
-
-Keep your argument under 250 words. Use clear structure: make each point distinct."""
+Keep your argument under 250 words. Be direct and structured."""
 
         user_prompt = f"""Topic: {topic}
 
 Evidence from web search:
-{context if context else "Use your knowledge to argue in favor."}
+{context or 'Use your knowledge to argue in favor.'}
 
 Argue clearly and persuasively IN FAVOR of this topic, citing sources inline."""
 
     llm = ChatOpenAI(
-        model="meta-llama/llama-3.3-70b-instruct", 
-        temperature=0.7, 
+        model="meta-llama/llama-3.3-70b-instruct",
+        temperature=0.7,
         streaming=True,
         openai_api_key=settings.OPENROUTER_API_KEY,
         openai_api_base="https://openrouter.ai/api/v1",
@@ -180,15 +175,13 @@ Argue clearly and persuasively IN FAVOR of this topic, citing sources inline."""
     return {**state, "argument": full_argument}
 
 
-# ── Build graph ────────────────────────────────────────────────────────────────
-
 def build_advocate_graph():
     graph = StateGraph(AdvocateState)
     graph.add_node("search", search_node)
-    graph.add_node("argue", argue_node)
+    graph.add_node("argue",  argue_node)
     graph.set_entry_point("search")
     graph.add_edge("search", "argue")
-    graph.add_edge("argue", END)
+    graph.add_edge("argue",  END)
     return graph.compile()
 
 

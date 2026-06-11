@@ -4,12 +4,14 @@ from django.db import models
 
 class Debate(models.Model):
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        RUNNING = "running", "Running"
-        REBUTTAL = "rebuttal", "Rebuttal Round"
-        JUDGING = "judging", "Judging"
+        PENDING   = "pending",   "Pending"
+        RUNNING   = "running",   "Round 1 – Advocate"
+        ROUND_2   = "round_2",   "Round 2 – Critic"
+        ROUND_3   = "round_3",   "Round 3 – Advocate"
+        ROUND_4   = "round_4",   "Round 4 – Critic"
+        JUDGING   = "judging",   "Judging"
         COMPLETED = "completed", "Completed"
-        FAILED = "failed", "Failed"
+        FAILED    = "failed",    "Failed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     topic = models.TextField()
@@ -17,7 +19,7 @@ class Debate(models.Model):
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at  = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -29,8 +31,8 @@ class Debate(models.Model):
 class AgentOutput(models.Model):
     class Role(models.TextChoices):
         ADVOCATE = "advocate", "Advocate"
-        CRITIC = "critic", "Critic"
-        JUDGE = "judge", "Judge"
+        CRITIC   = "critic",   "Critic"
+        JUDGE    = "judge",    "Judge"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     debate = models.ForeignKey(
@@ -38,26 +40,26 @@ class AgentOutput(models.Model):
     )
     role = models.CharField(max_length=20, choices=Role.choices)
 
-    # Round: 1 = initial argument, 2 = rebuttal (advocate only)
+    # Round 1–4 for advocate/critic, 1 for judge
     round_number = models.IntegerField(default=1)
 
     content = models.TextField(blank=True, default="")
 
-    # For judge only
-    advocate_score = models.FloatField(null=True, blank=True)
-    critic_score = models.FloatField(null=True, blank=True)
+    # Judge only
+    advocate_score       = models.FloatField(null=True, blank=True)
+    critic_score         = models.FloatField(null=True, blank=True)
     advocate_logic_score = models.FloatField(null=True, blank=True)
-    critic_logic_score = models.FloatField(null=True, blank=True)
-    verdict = models.TextField(blank=True, default="")
+    critic_logic_score   = models.FloatField(null=True, blank=True)
+    verdict              = models.TextField(blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at  = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["created_at"]
 
     def __str__(self):
-        return f"{self.role} | Debate {self.debate_id} | Round {self.round_number}"
+        return f"{self.role} R{self.round_number} | Debate {self.debate_id}"
 
 
 class Citation(models.Model):
@@ -65,11 +67,10 @@ class Citation(models.Model):
     agent_output = models.ForeignKey(
         AgentOutput, on_delete=models.CASCADE, related_name="citations"
     )
-    url = models.URLField(max_length=2000)
-    title = models.CharField(max_length=500, blank=True, default="")
+    url     = models.URLField(max_length=2000)
+    title   = models.CharField(max_length=500, blank=True, default="")
     snippet = models.TextField(blank=True, default="")
-    # [1], [2] inline index in agent content
-    index = models.IntegerField(default=1)
+    index   = models.IntegerField(default=1)
 
     class Meta:
         ordering = ["index"]

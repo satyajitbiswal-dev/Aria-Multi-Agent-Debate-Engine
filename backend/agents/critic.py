@@ -4,7 +4,6 @@ critic.py — LangGraph graph for the Critic agent.
 Mirrors advocate.py exactly in structure.
 Argues AGAINST the topic.
 """
-
 import json
 from typing import TypedDict, List, Optional
 from django.conf import settings
@@ -21,18 +20,21 @@ class CriticState(TypedDict):
     argument: str
     citations: List[dict]
     error: Optional[str]
+    advocate_argument: Optional[str]
+    previous_rounds: List[dict]   # [{role, round, text}]
+    is_rebuttal: bool
+    round_number: int
 
 
 search_tool = TavilySearchResults(
     max_results=5,
     output_format="list",
     search_depth="advanced",
-    tavily_api_key=settings.TAVILY_API_KEY
+    tavily_api_key=settings.TAVILY_API_KEY,
 )
 
 
 def _parse_search_results(raw) -> List[dict]:
-    """Normalise Tavily results into [{url, title, snippet}]."""
     results = []
     if isinstance(raw, str):
         try:
@@ -42,9 +44,9 @@ def _parse_search_results(raw) -> List[dict]:
     if isinstance(raw, list):
         for item in raw:
             results.append({
-                "url": item.get("url", ""),
-                "title": item.get("title", "Web Source"),
-                "snippet": item.get("content", ""),  # Tavily uses 'content'
+                "url":     item.get("url", ""),
+                "title":   item.get("title", "Web Source"),
+                "snippet": item.get("content", ""),
             })
     return results
 
@@ -52,18 +54,24 @@ def _parse_search_results(raw) -> List[dict]:
 def search_node(state: CriticState) -> CriticState:
     from agents.utils import push_status, push_citation
 
-    topic = state["topic"]
-    debate_id = state["debate_id"]
-    query = f"arguments against: {topic} problems disadvantages criticism"
+    topic      = state["topic"]
+    debate_id  = state["debate_id"]
+    round_num  = state.get("round_number", 2)
+    is_rebuttal = state.get("is_rebuttal", False)
 
-    push_status(debate_id, "critic", "Searching for counter-evidence...")
+    if is_rebuttal:
+        query = f"evidence against {topic} weaknesses problems criticism"
+        push_status(debate_id, "critic", f"Round {round_num} – Searching for rebuttal evidence…")
+    else:
+        query = f"arguments against: {topic} problems disadvantages criticism"
+        push_status(debate_id, "critic", f"Round {round_num} – Searching for counter-evidence…")
 
     try:
         raw = search_tool.invoke({"query": query})
         results = _parse_search_results(raw)
     except Exception:
         results = []
-        push_status(debate_id, "critic", "Search failed, reasoning from knowledge...")
+        push_status(debate_id, "critic", "Search failed, reasoning from knowledge…")
 
     citations = []
     for i, r in enumerate(results[:4], start=1):
@@ -76,40 +84,75 @@ def search_node(state: CriticState) -> CriticState:
 def argue_node(state: CriticState) -> CriticState:
     from agents.utils import push_status, push_token, push_done
 
-    debate_id = state["debate_id"]
-    topic = state["topic"]
-    search_results = state.get("search_results", [])
+    debate_id        = state["debate_id"]
+    topic            = state["topic"]
+    search_results   = state.get("search_results", [])
+    is_rebuttal      = state.get("is_rebuttal", False)
+    advocate_argument = state.get("advocate_argument", "")
+    previous_rounds  = state.get("previous_rounds", [])
+    round_num        = state.get("round_number", 2)
 
-    push_status(debate_id, "critic", "Building counter-argument...")
+    push_status(debate_id, "critic", f"Round {round_num} – Writing argument…")
 
     context = "\n\n".join([
         f"[{i+1}] {r['title']}\n{r['snippet']}\nSource: {r['url']}"
         for i, r in enumerate(search_results[:4])
     ])
 
-    system_prompt = """You are a skilled debater arguing AGAINST the given topic.
-Your job is to:
+    history_text = ""
+    if previous_rounds:
+        history_text = "\n\n".join([
+            f"=== Round {r['round']} — {r['role'].title()} ===\n{r['text']}"
+            for r in previous_rounds
+        ])
+
+    if is_rebuttal:
+        system_prompt = """You are a skilled debater arguing AGAINST the given topic.
+This is a REBUTTAL round. The Advocate has pushed back on your position.
+Your job:
+1. Directly counter each of the Advocate's specific rebuttal points with evidence
+2. Reinforce your strongest arguments from earlier rounds
+3. Cite sources using [1], [2], [3] notation inline
+Keep your rebuttal under 220 words. Be sharp and specific. Do NOT repeat what you already said."""
+
+        user_prompt = f"""Topic: {topic}
+
+Debate history so far:
+{history_text}
+
+Advocate's rebuttal you must counter:
+{advocate_argument}
+
+Counter-evidence:
+{context or 'Use your knowledge.'}
+
+Write a focused final rebuttal countering the Advocate's points."""
+
+    else:
+        system_prompt = """You are a skilled debater arguing AGAINST the given topic.
+Your job:
 1. Make 2-3 strong arguments opposing the topic
-2. Cite your web search sources using [1], [2], [3] notation inline
-3. Identify weaknesses and risks in the pro position
-4. Be persuasive but grounded in evidence
+2. Directly attack the Advocate's specific claims above
+3. Cite sources using [1], [2], [3] notation inline
+Keep your argument under 250 words. Be critical and evidence-based."""
 
-Keep your argument under 250 words. Be direct and critical."""
+        user_prompt = f"""Topic: {topic}
 
-    user_prompt = f"""Topic: {topic}
+The Advocate just argued:
+{advocate_argument}
 
-Evidence from web search:
-{context if context else "Use your knowledge to argue against."}
+Counter-evidence from web search:
+{context or 'Use your knowledge to argue against.'}
 
-Argue clearly and persuasively AGAINST this topic, citing sources inline."""
+Argue clearly and persuasively AGAINST this topic, directly addressing the Advocate's points and citing sources."""
 
     llm = ChatOpenAI(
-                     model="meta-llama/llama-3.3-70b-instruct", 
-                     temperature=0.7, 
-                     streaming=True,
-                     openai_api_key=settings.OPENROUTER_API_KEY , 
-                    openai_api_base="https://openrouter.ai/api/v1",
-            )
+        model="meta-llama/llama-3.3-70b-instruct",
+        temperature=0.7,
+        streaming=True,
+        openai_api_key=settings.OPENROUTER_API_KEY,
+        openai_api_base="https://openrouter.ai/api/v1",
+    )
 
     full_argument = ""
     try:
@@ -133,10 +176,10 @@ Argue clearly and persuasively AGAINST this topic, citing sources inline."""
 def build_critic_graph():
     graph = StateGraph(CriticState)
     graph.add_node("search", search_node)
-    graph.add_node("argue", argue_node)
+    graph.add_node("argue",  argue_node)
     graph.set_entry_point("search")
     graph.add_edge("search", "argue")
-    graph.add_edge("argue", END)
+    graph.add_edge("argue",  END)
     return graph.compile()
 
 

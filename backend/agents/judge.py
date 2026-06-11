@@ -7,8 +7,7 @@ Scores on:
   - Logical coherence (0–10)
 Delivers a final cited verdict.
 """
-
-import re
+import re, json
 from typing import TypedDict, Optional
 from django.conf import settings
 from langgraph.graph import StateGraph, END
@@ -22,95 +21,90 @@ class JudgeState(TypedDict):
     advocate_argument: str
     advocate_rebuttal: str
     critic_argument: str
-    # Scores (populated by judge)
+    critic_rebuttal: str
     advocate_evidence_score: Optional[float]
-    critic_evidence_score: Optional[float]
-    advocate_logic_score: Optional[float]
-    critic_logic_score: Optional[float]
-    verdict: str
+    critic_evidence_score:   Optional[float]
+    advocate_logic_score:    Optional[float]
+    critic_logic_score:      Optional[float]
+    verdict:  str
     analysis: str
-    error: Optional[str]
+    error:    Optional[str]
 
 
 def evaluate_node(state: JudgeState) -> JudgeState:
     from agents.utils import push_status, push_token, push_score, push_done
 
     debate_id = state["debate_id"]
-    topic = state["topic"]
-    advocate_argument = state.get("advocate_argument", "")
-    advocate_rebuttal = state.get("advocate_rebuttal", "")
-    critic_argument = state.get("critic_argument", "")
+    topic     = state["topic"]
 
-    push_status(debate_id, "judge", "Evaluating both sides...")
+    push_status(debate_id, "judge", "Reading all 4 rounds…")
 
-    full_advocate = advocate_argument
-    if advocate_rebuttal:
-        full_advocate += f"\n\n[REBUTTAL]\n{advocate_rebuttal}"
+    full_advocate = f"Opening:\n{state.get('advocate_argument','')}"
+    if state.get("advocate_rebuttal"):
+        full_advocate += f"\n\nRound 3 Rebuttal:\n{state['advocate_rebuttal']}"
 
-    system_prompt = """You are an impartial debate judge. You must evaluate two sides of a debate.
+    full_critic = f"Opening:\n{state.get('critic_argument','')}"
+    if state.get("critic_rebuttal"):
+        full_critic += f"\n\nRound 4 Rebuttal:\n{state['critic_rebuttal']}"
 
-Evaluate each side on:
-1. Evidence Quality (0-10): Quality, relevance, and credibility of sources and data used
-2. Logical Coherence (0-10): Clarity of reasoning, avoidance of fallacies, structure
+    system_prompt = """You are an impartial debate judge evaluating a 4-round debate.
 
-Then provide a verdict: which side made the stronger overall case, and why in 2-3 sentences.
+Score each side on:
+1. Evidence Quality (0-10): Quality, relevance, and credibility of sources used
+2. Logical Coherence (0-10): Clarity, structure, avoidance of fallacies
 
-CRITICAL: You MUST respond in EXACTLY this JSON format, nothing else:
+Consider ALL rounds including rebuttals. Reward effective counter-arguments.
+
+CRITICAL: Respond ONLY in this exact JSON format:
 {
   "advocate_evidence": <float 0-10>,
   "critic_evidence": <float 0-10>,
   "advocate_logic": <float 0-10>,
   "critic_logic": <float 0-10>,
   "verdict": "<one sentence: who won and why>",
-  "analysis": "<2-3 sentences expanding on the verdict, citing specific strengths/weaknesses>"
+  "analysis": "<2-3 sentences expanding on the verdict, citing specific strengths/weaknesses across all rounds>"
 }"""
 
     user_prompt = f"""Topic: {topic}
 
-ADVOCATE (argues FOR):
+ADVOCATE (argues FOR) — Rounds 1 & 3:
 {full_advocate}
 
-CRITIC (argues AGAINST):
-{critic_argument}
+CRITIC (argues AGAINST) — Rounds 2 & 4:
+{full_critic}
 
-Evaluate both sides and return your scores in the required JSON format."""
+Evaluate both sides across all rounds. Return scores in the required JSON format."""
 
-    llm = llm = ChatOpenAI(
-                     model="meta-llama/llama-3.3-70b-instruct", 
-                     temperature=0.2, 
-                     openai_api_key=settings.OPENROUTER_API_KEY ,  # Uses OPENROUTER_API_KEY from env
-                    openai_api_base="https://openrouter.ai/api/v1",
-            )
+    llm = ChatOpenAI(
+        model="meta-llama/llama-3.3-70b-instruct",
+        temperature=0.2,
+        openai_api_key=settings.OPENROUTER_API_KEY,
+        openai_api_base="https://openrouter.ai/api/v1",
+    )
 
     try:
-        push_status(debate_id, "judge", "Calculating scores...")
+        push_status(debate_id, "judge", "Calculating scores…")
         response = llm.invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ])
         raw = response.content.strip()
-
-        # Strip markdown fences if present
         raw = re.sub(r"```json\s*", "", raw)
-        raw = re.sub(r"```\s*", "", raw)
-
-        import json
+        raw = re.sub(r"```\s*",     "", raw)
         scores = json.loads(raw)
 
         advocate_evidence = float(scores.get("advocate_evidence", 5.0))
-        critic_evidence = float(scores.get("critic_evidence", 5.0))
-        advocate_logic = float(scores.get("advocate_logic", 5.0))
-        critic_logic = float(scores.get("critic_logic", 5.0))
-        verdict = scores.get("verdict", "Both sides made compelling arguments.")
-        analysis = scores.get("analysis", "")
+        critic_evidence   = float(scores.get("critic_evidence",   5.0))
+        advocate_logic    = float(scores.get("advocate_logic",    5.0))
+        critic_logic      = float(scores.get("critic_logic",      5.0))
+        verdict           = scores.get("verdict",  "Both sides made compelling arguments.")
+        analysis          = scores.get("analysis", "")
 
     except Exception as e:
-        # Fallback if JSON parsing fails
         advocate_evidence = critic_evidence = advocate_logic = critic_logic = 5.0
-        verdict = "Both sides made valid arguments. Unable to determine a clear winner."
+        verdict  = "Both sides made valid arguments. Unable to determine a clear winner."
         analysis = str(e)
 
-    # Push scores to the judge WebSocket panel
     push_score(
         debate_id,
         advocate_evidence=advocate_evidence,
@@ -120,8 +114,7 @@ Evaluate both sides and return your scores in the required JSON format."""
         verdict=verdict,
     )
 
-    # Stream the analysis text
-    push_status(debate_id, "judge", "Writing analysis...")
+    push_status(debate_id, "judge", "Writing analysis…")
     for word in analysis.split():
         push_token(debate_id, "judge", word + " ")
 
@@ -130,10 +123,10 @@ Evaluate both sides and return your scores in the required JSON format."""
     return {
         **state,
         "advocate_evidence_score": advocate_evidence,
-        "critic_evidence_score": critic_evidence,
-        "advocate_logic_score": advocate_logic,
-        "critic_logic_score": critic_logic,
-        "verdict": verdict,
+        "critic_evidence_score":   critic_evidence,
+        "advocate_logic_score":    advocate_logic,
+        "critic_logic_score":      critic_logic,
+        "verdict":  verdict,
         "analysis": analysis,
     }
 

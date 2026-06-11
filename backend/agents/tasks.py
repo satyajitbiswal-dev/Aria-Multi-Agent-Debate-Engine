@@ -1,259 +1,188 @@
 """
-tasks.py — Celery tasks for the full debate pipeline.
+tasks.py — 4-round sequential debate pipeline.
 
-Pipeline:
-  run_debate(debate_id)
-    → chord([run_advocate.s(), run_critic.s()], run_judge.s())
-
-Advocate and Critic run in PARALLEL (chord).
-Judge runs as a callback AFTER both complete.
-Rebuttal: after critic finishes, advocate fires a rebuttal task, then judge runs.
+Round 1: Advocate argues FOR
+Round 2: Critic argues AGAINST (sees round 1)
+Round 3: Advocate rebuts (sees rounds 1+2)
+Round 4: Critic rebuts (sees rounds 1+2+3)
+Judge:   Evaluates all 4 rounds
 """
 import os
-from celery import shared_task, chord
+from celery import shared_task
+
+
+def _save_output(debate, role_const, round_number, result):
+    """Persist AgentOutput + Citations. Returns the AgentOutput."""
+    from debates.models import AgentOutput, Citation
+    output = AgentOutput.objects.create(
+        debate=debate,
+        role=role_const,
+        round_number=round_number,
+        content=result.get("argument", ""),
+    )
+    for c in result.get("citations", []):
+        Citation.objects.create(
+            agent_output=output,
+            url=c.get("url", ""),
+            title=c.get("title", ""),
+            snippet=c.get("snippet", ""),
+            index=c.get("index", 1),
+        )
+    return output
 
 
 @shared_task(bind=True, max_retries=1)
-def run_advocate(self, debate_id: str, is_rebuttal: bool = False, critic_argument: str = ""):
-    """Run the Advocate LangGraph agent."""
-    import django
+def run_debate(self, debate_id: str):
+    """
+    Orchestrates the full 4-round debate synchronously inside one task.
+    Each round pushes tokens to the frontend via WebSocket.
+    """
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "aria.settings")
 
     from debates.models import Debate, AgentOutput
     from agents.advocate import advocate_graph
-
-    try:
-        debate = Debate.objects.get(id=debate_id)
-
-        result = advocate_graph.invoke({
-            "debate_id": debate_id,
-            "topic": debate.topic,
-            "search_results": [],
-            "argument": "",
-            "citations": [],
-            "error": None,
-            "critic_argument": critic_argument,
-            "is_rebuttal": is_rebuttal,
-        })
-
-        round_number = 2 if is_rebuttal else 1
-
-        # Save output to DB
-        output = AgentOutput.objects.create(
-            debate=debate,
-            role=AgentOutput.Role.ADVOCATE,
-            round_number=round_number,
-            content=result.get("argument", ""),
-        )
-
-        # Save citations
-        from debates.models import Citation
-        for c in result.get("citations", []):
-            Citation.objects.create(
-                agent_output=output,
-                url=c.get("url", ""),
-                title=c.get("title", ""),
-                snippet=c.get("snippet", ""),
-                index=c.get("index", 1),
-            )
-
-        return {
-            "role": "advocate",
-            "argument": result.get("argument", ""),
-            "round": round_number,
-        }
-
-    except Exception as e:
-        from agents.utils import push_error
-        push_error(debate_id, "advocate", str(e))
-        raise self.retry(exc=e, countdown=3)
-
-
-@shared_task(bind=True, max_retries=1)
-def run_critic(self, debate_id: str):
-    """Run the Critic LangGraph agent."""
-    import django
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "aria.settings")
-
-    from debates.models import Debate, AgentOutput
     from agents.critic import critic_graph
+    from agents.judge import judge_graph
+    from agents.utils import push_status, push_error
 
     try:
         debate = Debate.objects.get(id=debate_id)
 
-        result = critic_graph.invoke({
+        # ── Round 1: Advocate ────────────────────────────────────────────────
+        debate.status = Debate.Status.RUNNING
+        debate.save()
+        push_status(debate_id, "advocate", "Round 1 – Building opening argument...")
+        push_status(debate_id, "critic",   "Waiting for Advocate…")
+        push_status(debate_id, "judge",    "Waiting for all rounds…")
+
+        r1_adv = advocate_graph.invoke({
             "debate_id": debate_id,
             "topic": debate.topic,
             "search_results": [],
             "argument": "",
             "citations": [],
             "error": None,
+            "critic_argument": "",
+            "previous_rounds": [],
+            "is_rebuttal": False,
+            "round_number": 1,
         })
+        _save_output(debate, AgentOutput.Role.ADVOCATE, 1, r1_adv)
+        adv1_text = r1_adv.get("argument", "")
 
-        output = AgentOutput.objects.create(
-            debate=debate,
-            role=AgentOutput.Role.CRITIC,
-            round_number=1,
-            content=result.get("argument", ""),
-        )
+        # ── Round 2: Critic ──────────────────────────────────────────────────
+        debate.status = Debate.Status.ROUND_2
+        debate.save()
+        push_status(debate_id, "critic", "Round 2 – Building counter-argument...")
 
-        from debates.models import Citation
-        for c in result.get("citations", []):
-            Citation.objects.create(
-                agent_output=output,
-                url=c.get("url", ""),
-                title=c.get("title", ""),
-                snippet=c.get("snippet", ""),
-                index=c.get("index", 1),
-            )
+        r2_crit = critic_graph.invoke({
+            "debate_id": debate_id,
+            "topic": debate.topic,
+            "search_results": [],
+            "argument": "",
+            "citations": [],
+            "error": None,
+            "advocate_argument": adv1_text,
+            "previous_rounds": [
+                {"role": "advocate", "round": 1, "text": adv1_text},
+            ],
+            "is_rebuttal": False,
+            "round_number": 2,
+        })
+        _save_output(debate, AgentOutput.Role.CRITIC, 2, r2_crit)
+        crit2_text = r2_crit.get("argument", "")
 
-        return {
-            "role": "critic",
-            "argument": result.get("argument", ""),
-        }
+        # ── Round 3: Advocate rebuttal ────────────────────────────────────────
+        debate.status = Debate.Status.ROUND_3
+        debate.save()
+        push_status(debate_id, "advocate", "Round 3 – Rebutting Critic...")
 
-    except Exception as e:
-        from agents.utils import push_error
-        push_error(debate_id, "critic", str(e))
-        raise self.retry(exc=e, countdown=3)
+        r3_adv = advocate_graph.invoke({
+            "debate_id": debate_id,
+            "topic": debate.topic,
+            "search_results": [],
+            "argument": "",
+            "citations": [],
+            "error": None,
+            "critic_argument": crit2_text,
+            "previous_rounds": [
+                {"role": "advocate", "round": 1, "text": adv1_text},
+                {"role": "critic",   "round": 2, "text": crit2_text},
+            ],
+            "is_rebuttal": True,
+            "round_number": 3,
+        })
+        _save_output(debate, AgentOutput.Role.ADVOCATE, 3, r3_adv)
+        adv3_text = r3_adv.get("argument", "")
 
+        # ── Round 4: Critic final rebuttal ────────────────────────────────────
+        debate.status = Debate.Status.ROUND_4
+        debate.save()
+        push_status(debate_id, "critic", "Round 4 – Final rebuttal...")
 
-@shared_task(bind=True, max_retries=1)
-def run_judge(self, results: list, debate_id: str):
-    """
-    Run the Judge agent.
-    Called as chord callback — receives list of [advocate_result, critic_result].
-    """
-    import django
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "aria.settings")
+        r4_crit = critic_graph.invoke({
+            "debate_id": debate_id,
+            "topic": debate.topic,
+            "search_results": [],
+            "argument": "",
+            "citations": [],
+            "error": None,
+            "advocate_argument": adv3_text,
+            "previous_rounds": [
+                {"role": "advocate", "round": 1, "text": adv1_text},
+                {"role": "critic",   "round": 2, "text": crit2_text},
+                {"role": "advocate", "round": 3, "text": adv3_text},
+            ],
+            "is_rebuttal": True,
+            "round_number": 4,
+        })
+        _save_output(debate, AgentOutput.Role.CRITIC, 4, r4_crit)
+        crit4_text = r4_crit.get("argument", "")
 
-    from debates.models import Debate, AgentOutput
-    from agents.judge import judge_graph
-    from agents.utils import push_status
-
-    try:
-        debate = Debate.objects.get(id=debate_id)
+        # ── Judge ─────────────────────────────────────────────────────────────
         debate.status = Debate.Status.JUDGING
         debate.save()
+        push_status(debate_id, "judge", "Reviewing all 4 rounds…")
 
-        push_status(debate_id, "judge", "Reviewing both arguments...")
-
-        # Extract arguments from chord results
-        advocate_result = next((r for r in results if r and r.get("role") == "advocate" and r.get("round") == 1), {})
-        critic_result = next((r for r in results if r and r.get("role") == "critic"), {})
-
-        # Check for rebuttal output
-        advocate_rebuttal_obj = AgentOutput.objects.filter(
-            debate=debate, role=AgentOutput.Role.ADVOCATE, round_number=2
-        ).first()
-        advocate_rebuttal = advocate_rebuttal_obj.content if advocate_rebuttal_obj else ""
-
-        result = judge_graph.invoke({
+        judge_result = judge_graph.invoke({
             "debate_id": debate_id,
             "topic": debate.topic,
-            "advocate_argument": advocate_result.get("argument", ""),
-            "advocate_rebuttal": advocate_rebuttal,
-            "critic_argument": critic_result.get("argument", ""),
+            "advocate_argument": adv1_text,
+            "advocate_rebuttal": adv3_text,
+            "critic_argument": crit2_text,
+            "critic_rebuttal": crit4_text,
             "advocate_evidence_score": None,
-            "critic_evidence_score": None,
-            "advocate_logic_score": None,
-            "critic_logic_score": None,
-            "verdict": "",
-            "analysis": "",
-            "error": None,
+            "critic_evidence_score":   None,
+            "advocate_logic_score":    None,
+            "critic_logic_score":      None,
+            "verdict":   "",
+            "analysis":  "",
+            "error":     None,
         })
 
-        # Save judge output
         AgentOutput.objects.create(
             debate=debate,
             role=AgentOutput.Role.JUDGE,
             round_number=1,
-            content=result.get("analysis", ""),
-            advocate_score=result.get("advocate_evidence_score"),
-            critic_score=result.get("critic_evidence_score"),
-            advocate_logic_score=result.get("advocate_logic_score"),
-            critic_logic_score=result.get("critic_logic_score"),
-            verdict=result.get("verdict", ""),
+            content=judge_result.get("analysis", ""),
+            advocate_score=judge_result.get("advocate_evidence_score"),
+            critic_score=judge_result.get("critic_evidence_score"),
+            advocate_logic_score=judge_result.get("advocate_logic_score"),
+            critic_logic_score=judge_result.get("critic_logic_score"),
+            verdict=judge_result.get("verdict", ""),
         )
 
         debate.status = Debate.Status.COMPLETED
         debate.save()
 
     except Exception as e:
-        from agents.utils import push_error
-        push_error(debate_id, "judge", str(e))
+        push_error(debate_id, "advocate", str(e))
+        push_error(debate_id, "critic",   str(e))
+        push_error(debate_id, "judge",    str(e))
         try:
             debate = Debate.objects.get(id=debate_id)
             debate.status = Debate.Status.FAILED
             debate.save()
         except Exception:
             pass
-        raise self.retry(exc=e, countdown=3)
-
-
-@shared_task(bind=True)
-def run_debate(self, debate_id: str):
-    """
-    Main orchestrator task.
-
-    Phase 1: Advocate + Critic run in PARALLEL
-    Phase 2: Advocate REBUTS Critic
-    Phase 3: Judge evaluates all outputs
-    """
-    import django
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "aria.settings")
-
-    from debates.models import Debate
-    from agents.utils import push_status
-
-    debate = Debate.objects.get(id=debate_id)
-    debate.status = Debate.Status.RUNNING
-    debate.save()
-
-    push_status(debate_id, "advocate", "Starting...")
-    push_status(debate_id, "critic", "Starting...")
-    push_status(debate_id, "judge", "Waiting for arguments...")
-
-    # Phase 1: Run Advocate + Critic concurrently, then trigger the async rebuttal callback step
-    chord(
-        [run_advocate.s(debate_id), run_critic.s(debate_id)],
-        rebuttal_then_judge.s(debate_id),
-    ).apply_async()
-
-
-@shared_task(bind=True)
-def rebuttal_then_judge(self, phase_1_results: list, debate_id: str):
-    """
-    Called after Advocate + Critic both finish.
-    Runs Phase 2 (Rebuttal) asynchronously, then chains into Phase 3 (Judge).
-    """
-    from debates.models import Debate
-    from agents.utils import push_status
-
-    debate = Debate.objects.get(id=debate_id)
-    debate.status = Debate.Status.REBUTTAL
-    debate.save()
-
-    # Get Critic argument for rebuttal setup
-    critic_result = next((r for r in phase_1_results if r and r.get("role") == "critic"), {})
-    critic_argument = critic_result.get("argument", "")
-
-    push_status(debate_id, "advocate", "Preparing rebuttal...")
-
-    # We launch the rebuttal task asynchronously. 
-    # The 'link' signature acts as a callback that triggers when the rebuttal concludes.
-    run_advocate.apply_async(
-        args=[debate_id],
-        kwargs={"is_rebuttal": True, "critic_argument": critic_argument},
-        link=run_judge_after_rebuttal.s(phase_1_results, debate_id)
-    )
-
-
-@shared_task
-def run_judge_after_rebuttal(rebuttal_result: dict, phase_1_results: list, debate_id: str):
-    """
-    Intermediary callback helper to securely merge execution data lists 
-    without resorting to blocking runtime processes like .get()
-    """
-    all_results = phase_1_results + [rebuttal_result]
-    run_judge(all_results, debate_id)
+        raise self.retry(exc=e, countdown=5)
