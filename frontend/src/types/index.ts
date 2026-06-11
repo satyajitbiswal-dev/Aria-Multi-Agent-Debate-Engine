@@ -3,7 +3,9 @@ export type AgentRole = 'advocate' | 'critic' | 'judge'
 export type DebateStatus =
   | 'pending'
   | 'running'
-  | 'rebuttal'
+  | 'round_2'
+  | 'round_3'
+  | 'round_4'
   | 'judging'
   | 'completed'
   | 'failed'
@@ -39,7 +41,7 @@ export interface Debate {
   updated_at: string
 }
 
-// WebSocket message types from backend
+// WebSocket message types
 export type WsMessage =
   | { type: 'connected'; debate_id: string; agent_role: AgentRole }
   | { type: 'token'; content: string }
@@ -56,10 +58,10 @@ export type WsMessage =
   | { type: 'done' }
   | { type: 'error'; content: string }
 
-// Per-agent panel state (built from WS messages)
+// Per-agent panel state
 export interface AgentPanelState {
   status: string
-  content: string           // accumulated tokens
+  content: string
   citations: Citation[]
   isDone: boolean
   hasError: boolean
@@ -72,4 +74,15 @@ export interface JudgeScores {
   advocate_logic: number
   critic_logic: number
   verdict: string
+}
+
+// A single round entry in the debate thread
+export interface RoundEntry {
+  role: 'advocate' | 'critic'
+  roundNumber: number
+  label: string        // e.g. "Round 1" or "Rebuttal"
+  content: string
+  citations: Citation[]
+  isDone: boolean
+  isActive: boolean
 }
