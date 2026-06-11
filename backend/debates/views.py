@@ -1,3 +1,4 @@
+from django.http import HttpResponse
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -54,3 +55,36 @@ class DebateSuggestionsView(APIView):
 
     def get(self, request):
         return Response({"suggestions": self.SUGGESTIONS})
+    
+
+
+class DebateExportView(APIView):
+    """
+    GET /api/debates/<id>/export/
+    Returns a PDF transcript of a completed debate.
+    """
+
+    def get(self, request, id):
+        try:
+            debate = Debate.objects.prefetch_related(
+                "agent_outputs__citations"
+            ).get(id=id)
+        except Debate.DoesNotExist:
+            return Response({"error": "Debate not found."}, status=404)
+
+        if debate.status != Debate.Status.COMPLETED:
+            return Response(
+                {"error": "PDF only available for completed debates."},
+                status=400,
+            )
+
+        from .export import generate_debate_pdf
+        buffer = generate_debate_pdf(debate)
+
+        safe_topic = debate.topic[:40].replace(" ", "_").replace("/", "-")
+        filename = f"aria_debate_{safe_topic}.pdf"
+
+        response = HttpResponse(buffer, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
