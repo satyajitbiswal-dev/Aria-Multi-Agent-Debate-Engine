@@ -9,7 +9,6 @@ Advocate and Critic run in PARALLEL (chord).
 Judge runs as a callback AFTER both complete.
 Rebuttal: after critic finishes, advocate fires a rebuttal task, then judge runs.
 """
-
 import os
 from celery import shared_task, chord
 
@@ -140,7 +139,7 @@ def run_judge(self, results: list, debate_id: str):
         push_status(debate_id, "judge", "Reviewing both arguments...")
 
         # Extract arguments from chord results
-        advocate_result = next((r for r in results if r and r.get("role") == "advocate"), {})
+        advocate_result = next((r for r in results if r and r.get("role") == "advocate" and r.get("round") == 1), {})
         critic_result = next((r for r in results if r and r.get("role") == "critic"), {})
 
         # Check for rebuttal output
@@ -215,8 +214,7 @@ def run_debate(self, debate_id: str):
     push_status(debate_id, "critic", "Starting...")
     push_status(debate_id, "judge", "Waiting for arguments...")
 
-    # Phase 1: Run Advocate + Critic in parallel
-    # Use chord: both tasks run concurrently, then trigger rebuttal_then_judge
+    # Phase 1: Run Advocate + Critic concurrently, then trigger the async rebuttal callback step
     chord(
         [run_advocate.s(debate_id), run_critic.s(debate_id)],
         rebuttal_then_judge.s(debate_id),
@@ -224,10 +222,10 @@ def run_debate(self, debate_id: str):
 
 
 @shared_task(bind=True)
-def rebuttal_then_judge(self, results: list, debate_id: str):
+def rebuttal_then_judge(self, phase_1_results: list, debate_id: str):
     """
     Called after Advocate + Critic both finish.
-    Runs Advocate rebuttal, then fires Judge.
+    Runs Phase 2 (Rebuttal) asynchronously, then chains into Phase 3 (Judge).
     """
     from debates.models import Debate
     from agents.utils import push_status
@@ -236,18 +234,26 @@ def rebuttal_then_judge(self, results: list, debate_id: str):
     debate.status = Debate.Status.REBUTTAL
     debate.save()
 
-    # Get Critic argument for rebuttal
-    critic_result = next((r for r in results if r and r.get("role") == "critic"), {})
+    # Get Critic argument for rebuttal setup
+    critic_result = next((r for r in phase_1_results if r and r.get("role") == "critic"), {})
     critic_argument = critic_result.get("argument", "")
 
     push_status(debate_id, "advocate", "Preparing rebuttal...")
 
-    # Run rebuttal synchronously in this task (keeps ordering simple)
-    rebuttal_result = run_advocate.apply(
+    # We launch the rebuttal task asynchronously. 
+    # The 'link' signature acts as a callback that triggers when the rebuttal concludes.
+    run_advocate.apply_async(
         args=[debate_id],
-        kwargs={"is_rebuttal": True, "critic_argument": critic_argument}
-    ).get()
+        kwargs={"is_rebuttal": True, "critic_argument": critic_argument},
+        link=run_judge_after_rebuttal.s(phase_1_results, debate_id)
+    )
 
-    # Now run judge with all results
-    all_results = results + [rebuttal_result]
-    run_judge.apply_async(args=[all_results, debate_id])
+
+@shared_task
+def run_judge_after_rebuttal(rebuttal_result: dict, phase_1_results: list, debate_id: str):
+    """
+    Intermediary callback helper to securely merge execution data lists 
+    without resorting to blocking runtime processes like .get()
+    """
+    all_results = phase_1_results + [rebuttal_result]
+    run_judge(all_results, debate_id)

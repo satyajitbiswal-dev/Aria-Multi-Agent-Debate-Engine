@@ -123,3 +123,8 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+
+# ─────────────────────────────────────────── OPENROUTER CONFIG ──────────────────────────────────────────────
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")

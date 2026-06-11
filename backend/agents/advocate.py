@@ -8,14 +8,14 @@ search_node:  Uses web search to gather evidence FOR the topic.
 argue_node:   Reasons over search results, builds structured argument,
               streams tokens back via Django Channels.
 """
-
 import json
 import re
 from typing import TypedDict, Annotated, List, Optional
+from django.conf import settings
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.tools.tavily_search import TavilySearchResults
 
 
 # ── State schema ──────────────────────────────────────────────────────────────
@@ -27,31 +27,40 @@ class AdvocateState(TypedDict):
     argument: str                        # Final argument text
     citations: List[dict]               # [{index, url, title, snippet}]
     error: Optional[str]
-    # For rebuttal round
     critic_argument: Optional[str]
     is_rebuttal: bool
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-search_tool = DuckDuckGoSearchResults(num_results=5, output_format="list")
+# LangChain automatically picks up settings.TAVILY_API_KEY if passed,
+# or you can pass it directly via the kwargs initialization.
+search_tool = TavilySearchResults(
+    max_results=5, 
+    output_format="list", 
+    search_depth="advanced",
+    tavily_api_key=settings.TAVILY_API_KEY
+)
 
 
 def _parse_search_results(raw) -> List[dict]:
-    """Normalise DuckDuckGo results into [{url, title, snippet}]."""
+    """Normalise Tavily results into [{url, title, snippet}]."""
     results = []
+    
     if isinstance(raw, str):
-        # Sometimes returns a string representation of a list
         try:
-            raw = json.loads(raw.replace("'", '"'))
+            raw = json.loads(raw)
         except Exception:
             return []
+            
     if isinstance(raw, list):
         for item in raw:
+            # Tavily returns 'url' and 'content'. 
+            # We map 'content' -> 'snippet' to preserve your existing state schema.
             results.append({
-                "url": item.get("link", item.get("url", "")),
-                "title": item.get("title", ""),
-                "snippet": item.get("snippet", item.get("body", "")),
+                "url": item.get("url", ""),
+                "title": item.get("title", "Web Source"), # Tavily list wrapper sometimes omits titles
+                "snippet": item.get("content", ""),       # <-- CHANGED FROM 'body'/'snippet'
             })
     return results
 
@@ -74,11 +83,12 @@ def search_node(state: AdvocateState) -> AdvocateState:
         push_status(debate_id, "advocate", "Searching the web...")
 
     try:
-        raw = search_tool.invoke(query)
+        # LangChain tools expect a dict context or raw string query passed to invoke()
+        raw = search_tool.invoke({"query": query})
         results = _parse_search_results(raw)
     except Exception as e:
         results = []
-        push_status(debate_id, "advocate", f"Search failed, reasoning from knowledge...")
+        push_status(debate_id, "advocate", f"Search failed: {str(e)}. Reasoning from knowledge...")
 
     # Push citations to client as they're found
     citations = []
@@ -143,7 +153,13 @@ Evidence from web search:
 
 Argue clearly and persuasively IN FAVOR of this topic, citing sources inline."""
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, streaming=True)
+    llm = ChatOpenAI(
+        model="meta-llama/llama-3.3-70b-instruct", 
+        temperature=0.7, 
+        streaming=True,
+        openai_api_key=settings.OPENROUTER_API_KEY,
+        openai_api_base="https://openrouter.ai/api/v1",
+    )
 
     full_argument = ""
     try:

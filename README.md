@@ -18,7 +18,7 @@ Three LangGraph agents argue any topic in real time over WebSockets.
 | Backend | Django 5 + DRF |
 | Realtime | Django Channels + Redis |
 | Async | Celery + Redis |
-| AI Agents | LangGraph + OpenAI gpt-4o-mini |
+| AI Agents | LangGraph + OpenRouter gpt-4o-mini |
 | Database | PostgreSQL |
 
 ---

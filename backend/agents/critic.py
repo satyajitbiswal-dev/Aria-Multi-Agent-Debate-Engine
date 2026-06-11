@@ -7,10 +7,11 @@ Argues AGAINST the topic.
 
 import json
 from typing import TypedDict, List, Optional
+from django.conf import settings
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.tools.tavily_search import TavilySearchResults
 
 
 class CriticState(TypedDict):
@@ -22,22 +23,28 @@ class CriticState(TypedDict):
     error: Optional[str]
 
 
-search_tool = DuckDuckGoSearchResults(num_results=5, output_format="list")
+search_tool = TavilySearchResults(
+    max_results=5,
+    output_format="list",
+    search_depth="advanced",
+    tavily_api_key=settings.TAVILY_API_KEY
+)
 
 
 def _parse_search_results(raw) -> List[dict]:
+    """Normalise Tavily results into [{url, title, snippet}]."""
     results = []
     if isinstance(raw, str):
         try:
-            raw = json.loads(raw.replace("'", '"'))
+            raw = json.loads(raw)
         except Exception:
             return []
     if isinstance(raw, list):
         for item in raw:
             results.append({
-                "url": item.get("link", item.get("url", "")),
-                "title": item.get("title", ""),
-                "snippet": item.get("snippet", item.get("body", "")),
+                "url": item.get("url", ""),
+                "title": item.get("title", "Web Source"),
+                "snippet": item.get("content", ""),  # Tavily uses 'content'
             })
     return results
 
@@ -52,7 +59,7 @@ def search_node(state: CriticState) -> CriticState:
     push_status(debate_id, "critic", "Searching for counter-evidence...")
 
     try:
-        raw = search_tool.invoke(query)
+        raw = search_tool.invoke({"query": query})
         results = _parse_search_results(raw)
     except Exception:
         results = []
@@ -96,7 +103,13 @@ Evidence from web search:
 
 Argue clearly and persuasively AGAINST this topic, citing sources inline."""
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, streaming=True)
+    llm = ChatOpenAI(
+                     model="meta-llama/llama-3.3-70b-instruct", 
+                     temperature=0.7, 
+                     streaming=True,
+                     openai_api_key=settings.OPENROUTER_API_KEY , 
+                    openai_api_base="https://openrouter.ai/api/v1",
+            )
 
     full_argument = ""
     try:

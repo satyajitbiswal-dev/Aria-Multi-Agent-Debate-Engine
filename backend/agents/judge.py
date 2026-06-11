@@ -10,6 +10,7 @@ Delivers a final cited verdict.
 
 import re
 from typing import TypedDict, Optional
+from django.conf import settings
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -74,7 +75,12 @@ CRITIC (argues AGAINST):
 
 Evaluate both sides and return your scores in the required JSON format."""
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+    llm = llm = ChatOpenAI(
+                     model="meta-llama/llama-3.3-70b-instruct", 
+                     temperature=0.2, 
+                     openai_api_key=settings.OPENROUTER_API_KEY ,  # Uses OPENROUTER_API_KEY from env
+                    openai_api_base="https://openrouter.ai/api/v1",
+            )
 
     try:
         push_status(debate_id, "judge", "Calculating scores...")
