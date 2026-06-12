@@ -1,7 +1,6 @@
 # ⚡ Aria — Multi-Agent Live Debate Platform
 
-> **🎬 Demo video:** [Watch on Google Drive](hhttps://drive.google.com/drive/folders/1DLB--kwo3p7-ElnoKgqU4q79OUZWKhN6?usp=sharing)  
-> *(Replace `YOUR_FILE_ID` with your Drive link before submitting.)*
+> **🎬 Demo video:** [Watch on Google Drive](https://drive.google.com/drive/folders/1DLB--kwo3p7-ElnoKgqU4q79OUZWKhN6?usp=sharing)  
 
 **Aria** is a real-time, multi-agent debate engine. Three AI agents — Advocate, Critic, and Judge — research a topic on the web, argue in structured rounds, stream their reasoning live over WebSockets, and deliver a scored verdict with citations.
 
