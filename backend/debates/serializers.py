@@ -14,17 +14,10 @@ class AgentOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentOutput
         fields = [
-            "id",
-            "role",
-            "round_number",
-            "content",
-            "advocate_score",
-            "critic_score",
-            "advocate_logic_score",
-            "critic_logic_score",
-            "verdict",
-            "citations",
-            "created_at",
+            "id", "role", "round_number", "turn", "content",
+            "advocate_score", "critic_score",
+            "advocate_logic_score", "critic_logic_score",
+            "verdict", "citations", "created_at",
         ]
 
 
@@ -33,14 +26,14 @@ class DebateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Debate
-        fields = ["id", "topic", "status", "agent_outputs", "created_at", "updated_at"]
+        fields = ["id", "topic", "num_rounds", "status", "agent_outputs", "created_at", "updated_at"]
         read_only_fields = ["id", "status", "created_at", "updated_at"]
 
 
 class CreateDebateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Debate
-        fields = ["topic"]
+        fields = ["topic", "num_rounds"]
 
     def validate_topic(self, value):
         if len(value.strip()) < 5:
@@ -48,3 +41,8 @@ class CreateDebateSerializer(serializers.ModelSerializer):
         if len(value) > 500:
             raise serializers.ValidationError("Topic must be under 500 characters.")
         return value.strip()
+
+    def validate_num_rounds(self, value):
+        if value < 1 or value > 4:
+            raise serializers.ValidationError("Rounds must be between 1 and 4.")
+        return value

@@ -5,21 +5,17 @@ from django.db import models
 class Debate(models.Model):
     class Status(models.TextChoices):
         PENDING   = "pending",   "Pending"
-        RUNNING   = "running",   "Round 1 – Advocate"
-        ROUND_2   = "round_2",   "Round 2 – Critic"
-        ROUND_3   = "round_3",   "Round 3 – Advocate"
-        ROUND_4   = "round_4",   "Round 4 – Critic"
+        RUNNING   = "running",   "Running"
         JUDGING   = "judging",   "Judging"
         COMPLETED = "completed", "Completed"
         FAILED    = "failed",    "Failed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    topic = models.TextField()
-    status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.PENDING
-    )
+    topic      = models.TextField()
+    num_rounds = models.IntegerField(default=2)   # 1–4, each round = advocate + critic
+    status     = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at  = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -35,15 +31,11 @@ class AgentOutput(models.Model):
         JUDGE    = "judge",    "Judge"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    debate = models.ForeignKey(
-        Debate, on_delete=models.CASCADE, related_name="agent_outputs"
-    )
-    role = models.CharField(max_length=20, choices=Role.choices)
-
-    # Round 1–4 for advocate/critic, 1 for judge
-    round_number = models.IntegerField(default=1)
-
-    content = models.TextField(blank=True, default="")
+    debate       = models.ForeignKey(Debate, on_delete=models.CASCADE, related_name="agent_outputs")
+    role         = models.CharField(max_length=20, choices=Role.choices)
+    round_number = models.IntegerField(default=1)   # 1-based exchange index
+    turn         = models.CharField(max_length=10, default="advocate")  # "advocate" | "critic"
+    content      = models.TextField(blank=True, default="")
 
     # Judge only
     advocate_score       = models.FloatField(null=True, blank=True)
@@ -53,7 +45,7 @@ class AgentOutput(models.Model):
     verdict              = models.TextField(blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at  = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["created_at"]
@@ -64,9 +56,7 @@ class AgentOutput(models.Model):
 
 class Citation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    agent_output = models.ForeignKey(
-        AgentOutput, on_delete=models.CASCADE, related_name="citations"
-    )
+    agent_output = models.ForeignKey(AgentOutput, on_delete=models.CASCADE, related_name="citations")
     url     = models.URLField(max_length=2000)
     title   = models.CharField(max_length=500, blank=True, default="")
     snippet = models.TextField(blank=True, default="")
