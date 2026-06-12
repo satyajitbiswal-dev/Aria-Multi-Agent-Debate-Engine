@@ -24,6 +24,8 @@ class CriticState(TypedDict):
     previous_rounds: List[dict]   # [{role, round, text}]
     is_rebuttal: bool
     round_number: int
+    user_stance: Optional[str]
+    is_interactive_address: bool
 
 
 search_tool = TavilySearchResults(
@@ -106,7 +108,37 @@ def argue_node(state: CriticState) -> CriticState:
             for r in previous_rounds
         ])
 
-    if is_rebuttal:
+    user_stance = state.get("user_stance")
+    is_interactive = state.get("is_interactive_address", False)
+
+    if is_interactive and user_stance:
+        aligned = user_stance == "critic"
+        if aligned:
+            system_prompt = """You are the Critic speaking DIRECTLY to a human audience member who sided WITH you.
+Your job:
+1. Encourage and validate their skepticism — tell them they're thinking clearly
+2. Strengthen their conviction with 2-3 sharp counter-points
+3. Cite sources using [1], [2], [3] notation inline
+Keep under 200 words. Be warm, confident, and personally engaging (use "you")."""
+        else:
+            system_prompt = """You are the Critic speaking DIRECTLY to a human who sided with the ADVOCATE.
+Your job:
+1. Respectfully acknowledge their position
+2. Try to persuade them to reconsider with 2-3 compelling objections
+3. Cite sources using [1], [2], [3] notation inline
+Keep under 200 words. Be persuasive but not condescending (use "you")."""
+
+        user_prompt = f"""Topic: {topic}
+
+Debate so far:
+{history_text or 'See opening round above.'}
+
+Counter-evidence:
+{context or 'Use your knowledge.'}
+
+Address the human listener directly based on which side they chose."""
+
+    elif is_rebuttal:
         system_prompt = """You are a skilled debater arguing AGAINST the given topic.
 This is a REBUTTAL round. The Advocate has pushed back on your position.
 Your job:
@@ -114,6 +146,11 @@ Your job:
 2. Reinforce your strongest arguments from earlier rounds
 3. Cite sources using [1], [2], [3] notation inline
 Keep your rebuttal under 220 words. Be sharp and specific. Do NOT repeat what you already said."""
+        if user_stance:
+            if user_stance == "critic":
+                system_prompt += "\n\nA human audience member sided WITH you — briefly encourage them while rebutting."
+            else:
+                system_prompt += "\n\nA human sided with the Advocate — try to persuade them while rebutting."
 
         user_prompt = f"""Topic: {topic}
 

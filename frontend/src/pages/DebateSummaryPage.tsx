@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { debatesApi } from '@/lib/api'
-import { ExportButton } from '@/components/ExportButton'
 import { ScoreBoard } from '@/components/ScoreBoard'
 import type { Debate, AgentOutput, Citation } from '@/types'
 
@@ -133,7 +132,6 @@ export function DebateSummaryPage() {
           <span className="text-gray-800">|</span>
           <span className="text-white font-semibold text-sm">⚡ Aria</span>
         </div>
-        {debate?.status === 'completed' && id && <ExportButton debateId={id} topic={debate.topic} />}
       </header>
 
       <main className="flex-1 max-w-3xl mx-auto w-full px-4 md:px-6 py-6">
@@ -197,11 +195,6 @@ export function DebateSummaryPage() {
               ))}
             </div>
 
-            {debate.status === 'completed' && id && (
-              <div className="mt-8 pt-6 border-t border-gray-800 flex justify-end">
-                <ExportButton debateId={id} topic={debate.topic} />
-              </div>
-            )}
           </>
         )}
       </main>

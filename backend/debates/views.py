@@ -1,4 +1,3 @@
-from django.http import HttpResponse
 from django.conf import settings
 from rest_framework import generics, status
 from rest_framework.response import Response
@@ -127,21 +126,35 @@ Respond ONLY in this JSON format:
     return data["improved"], data["explanation"]
 
 
-class DebateExportView(APIView):
-    permission_classes = [AllowAny]
+class DebateStanceView(APIView):
+    """
+    POST /api/debates/<id>/stance/
+    Body: { "stance": "advocate" | "critic" }
+    Submitted after round 1 when interactive_mode is enabled.
+    """
+    permission_classes = [IsAuthenticated]
 
-    def get(self, request, id):
+    def post(self, request, id):
         try:
-            debate = Debate.objects.prefetch_related("agent_outputs__citations").get(id=id)
+            debate = Debate.objects.get(id=id)
         except Debate.DoesNotExist:
             return Response({"error": "Debate not found."}, status=404)
 
-        if debate.status != Debate.Status.COMPLETED:
-            return Response({"error": "PDF only available for completed debates."}, status=400)
+        if not debate.interactive_mode:
+            return Response({"error": "This debate is not in interactive mode."}, status=400)
+        if not debate.awaiting_stance:
+            return Response({"error": "Not awaiting a stance choice."}, status=400)
 
-        from .export import generate_debate_pdf
-        buffer = generate_debate_pdf(debate)
-        safe_topic = debate.topic[:40].replace(" ", "_").replace("/", "-")
-        response = HttpResponse(buffer, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="aria_debate_{safe_topic}.pdf"'
-        return response
+        stance = (request.data.get("stance") or "").strip().lower()
+        if stance not in ("advocate", "critic"):
+            return Response({"error": "Stance must be 'advocate' or 'critic'."}, status=400)
+
+        debate.user_stance = stance
+        debate.awaiting_stance = False
+        debate.save(update_fields=["user_stance", "awaiting_stance"])
+
+        from agents.tasks import continue_debate
+        continue_debate.delay(str(debate.id))
+
+        return Response(DebateSerializer(debate).data)
+

@@ -26,14 +26,18 @@ class DebateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Debate
-        fields = ["id", "topic", "num_rounds", "status", "agent_outputs", "created_at", "updated_at"]
+        fields = [
+            "id", "topic", "num_rounds", "status",
+            "interactive_mode", "user_stance", "awaiting_stance",
+            "agent_outputs", "created_at", "updated_at",
+        ]
         read_only_fields = ["id", "status", "created_at", "updated_at"]
 
 
 class CreateDebateSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Debate
-        fields = ["topic", "num_rounds"]
+        fields = ["topic", "num_rounds", "interactive_mode"]
 
     def validate_topic(self, value):
         v = value.strip()

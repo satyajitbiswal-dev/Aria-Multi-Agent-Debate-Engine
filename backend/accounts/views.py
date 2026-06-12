@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.conf import settings
+from django.core import signing
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -61,20 +61,29 @@ class MeView(APIView):
 
 class GoogleCallbackView(APIView):
     """
-    After allauth completes the Google OAuth browser flow it redirects to
-    FRONTEND_URL/auth/callback.  The frontend then hits this endpoint with
-    the allauth session cookie to exchange it for JWT tokens.
-    Called with: POST /api/accounts/google/token/  (no body needed — user is
-    already authenticated via session from the allauth redirect).
+    After allauth completes Google OAuth it redirects to the frontend with a
+    signed one-time oauth_token.  The SPA exchanges that token for JWTs.
+    Falls back to session auth when cookies are available (same-origin).
     """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # At this point allauth has already set request.user if the session
-        # cookie is present.  If not, return 401.
-        if not request.user or not request.user.is_authenticated:
-            return Response(
-                {"detail": "Not authenticated. Complete Google OAuth first."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        return Response(_jwt_for_user(request.user))
+        oauth_token = request.data.get("oauth_token")
+        if oauth_token:
+            try:
+                data = signing.loads(oauth_token, salt="aria-oauth", max_age=300)
+                user = User.objects.get(pk=data["uid"])
+                return Response(_jwt_for_user(user))
+            except Exception:
+                return Response(
+                    {"detail": "Invalid or expired OAuth token. Please sign in again."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+        if request.user and request.user.is_authenticated:
+            return Response(_jwt_for_user(request.user))
+
+        return Response(
+            {"detail": "Not authenticated. Complete Google OAuth first."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
