@@ -99,10 +99,6 @@ aria/
 │   ├── accounts/             # Register, login, Google OAuth JWT exchange
 │   ├── debates/              # Models, REST API, WebSocket consumers
 │   └── agents/               # LangGraph graphs (advocate, critic, judge), Celery tasks
-├── docs/
-│   └── Aria_Project_Report.pdf   # Project report (vision, tech, use cases)
-├── scripts/
-│   └── generate_project_report.py
 └── docker-compose.yml
 ```
 
@@ -240,29 +236,8 @@ ws://localhost:8000/ws/debate/<debate_id>/<advocate|critic|judge>/
 - **Media & journalism** — explore both sides of a story with linked evidence.
 - **Startup pitch practice** — founders defend their thesis; the Critic simulates investor objections.
 
-Full write-up: **[docs/Aria_Project_Report.pdf](docs/Aria_Project_Report.pdf)** (vision, tech stack, innovation, startup angle, extended benefits).
-
-To regenerate after edits:
-
-```bash
-pip install reportlab
-python scripts/generate_project_report.py
-```
-
----
-
 ## License
-
 MIT — see repository for details.
-
----
-
-## Contributing
-
-1. Fork the repository  
-2. Create a feature branch (`git checkout -b feature/my-feature`)  
-3. Commit changes (`git commit -m 'Add my feature'`)  
-4. Push and open a Pull Request  
 
 ---
 
