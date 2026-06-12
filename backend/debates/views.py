@@ -1,44 +1,51 @@
 from django.http import HttpResponse
+from django.conf import settings
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from .models import Debate
 from .serializers import DebateSerializer, CreateDebateSerializer
 
 
 class DebateListCreateView(generics.ListCreateAPIView):
-    queryset = Debate.objects.all().prefetch_related("agent_outputs__citations")
+    """
+    GET  — list debates for the authenticated user (or all if anon, limited to 20)
+    POST — create a new debate (anon allowed; saved with user=None)
+    """
+    permission_classes = [AllowAny]
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
-            return CreateDebateSerializer
-        return DebateSerializer
+        return CreateDebateSerializer if self.request.method == "POST" else DebateSerializer
+
+    def get_queryset(self):
+        qs = Debate.objects.prefetch_related("agent_outputs__citations")
+        if self.request.user and self.request.user.is_authenticated:
+            return qs.filter(user=self.request.user)
+        # Anonymous: return nothing — they don't have a history
+        return qs.none()
 
     def create(self, request, *args, **kwargs):
-        serializer = CreateDebateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        debate = serializer.save()
-
-        # Fire off the Celery task — import here to avoid circular imports
+        ser = CreateDebateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        debate = ser.save(
+            user=request.user if request.user.is_authenticated else None
+        )
         from agents.tasks import run_debate
         run_debate.delay(str(debate.id))
-
-        return Response(
-            DebateSerializer(debate).data,
-            status=status.HTTP_201_CREATED,
-        )
+        return Response(DebateSerializer(debate).data, status=status.HTTP_201_CREATED)
 
 
 class DebateDetailView(generics.RetrieveAPIView):
+    permission_classes = [AllowAny]
     queryset = Debate.objects.all().prefetch_related("agent_outputs__citations")
     serializer_class = DebateSerializer
     lookup_field = "id"
 
 
 class DebateSuggestionsView(APIView):
-    """Returns seeded topic suggestions for the UI."""
+    permission_classes = [AllowAny]
 
     SUGGESTIONS = [
         "Should AI replace traditional university exams?",
@@ -55,36 +62,86 @@ class DebateSuggestionsView(APIView):
 
     def get(self, request):
         return Response({"suggestions": self.SUGGESTIONS})
-    
+
+
+class DebateImproveTopicView(APIView):
+    """
+    POST /api/debates/improve-topic/
+    Body: { "topic": "AI is bad" }
+    Returns: { "original": "...", "improved": "...", "explanation": "..." }
+
+    Uses a quick LLM call to rewrite a vague topic into a proper debate motion.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        topic = (request.data.get("topic") or "").strip()
+        if len(topic) < 3:
+            return Response({"error": "Topic too short."}, status=400)
+
+        try:
+            improved, explanation = _improve_topic(topic)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+        return Response({
+            "original":    topic,
+            "improved":    improved,
+            "explanation": explanation,
+        })
+
+
+def _improve_topic(topic: str):
+    """Call LLM to turn a raw topic into a sharp debate motion."""
+    import re, json
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    llm = ChatOpenAI(
+        model="meta-llama/llama-3.3-70b-instruct",
+        temperature=0.4,
+        openai_api_key=settings.OPENROUTER_API_KEY,
+        openai_api_base="https://openrouter.ai/api/v1",
+    )
+
+    system = """You are a debate coach who rewrites vague topics into sharp, arguable debate motions.
+
+Rules for a good debate motion:
+- Clear and specific — no ambiguous terms
+- Arguable from both sides — not obviously one-sided
+- Present tense statement ("This house believes that…" style, but without the "This house" prefix)
+- 10–20 words max
+- No questions — must be a statement
+
+Respond ONLY in this JSON format:
+{
+  "improved": "<the rewritten motion>",
+  "explanation": "<one sentence: what you changed and why>"
+}"""
+
+    user = f'Rewrite this debate topic into a sharp motion: "{topic}"'
+
+    response = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+    raw = re.sub(r"```json\s*|```\s*", "", response.content.strip())
+    data = json.loads(raw)
+    return data["improved"], data["explanation"]
 
 
 class DebateExportView(APIView):
-    """
-    GET /api/debates/<id>/export/
-    Returns a PDF transcript of a completed debate.
-    """
+    permission_classes = [AllowAny]
 
     def get(self, request, id):
         try:
-            debate = Debate.objects.prefetch_related(
-                "agent_outputs__citations"
-            ).get(id=id)
+            debate = Debate.objects.prefetch_related("agent_outputs__citations").get(id=id)
         except Debate.DoesNotExist:
             return Response({"error": "Debate not found."}, status=404)
 
         if debate.status != Debate.Status.COMPLETED:
-            return Response(
-                {"error": "PDF only available for completed debates."},
-                status=400,
-            )
+            return Response({"error": "PDF only available for completed debates."}, status=400)
 
         from .export import generate_debate_pdf
         buffer = generate_debate_pdf(debate)
-
         safe_topic = debate.topic[:40].replace(" ", "_").replace("/", "-")
-        filename = f"aria_debate_{safe_topic}.pdf"
-
         response = HttpResponse(buffer, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Disposition"] = f'attachment; filename="aria_debate_{safe_topic}.pdf"'
         return response
-
