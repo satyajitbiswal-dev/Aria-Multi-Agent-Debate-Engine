@@ -47,7 +47,7 @@ CRITICAL: Respond ONLY in this exact JSON format, nothing else:
   "advocate_logic": <float 0-10>,
   "critic_logic": <float 0-10>,
   "verdict": "<one sentence: who won and why>",
-  "analysis": "<2-3 sentences citing specific strengths/weaknesses across all rounds>"
+  "analysis": "<max 120 words citing specific strengths/weaknesses across all rounds>"
 }}"""
 
     user_prompt = f"""Topic: {state['topic']}

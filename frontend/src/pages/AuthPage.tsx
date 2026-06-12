@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { useAuth } from '@/context/AuthContext'
@@ -49,8 +49,15 @@ export function AuthPage() {
   const [lastName,  setLastName]  = useState('')
   const [error,     setError]     = useState('')
   const [loading,   setLoading]   = useState(false)
+  const [googleOk,  setGoogleOk]  = useState(true)
 
   const { login, register } = useAuth()
+
+  useEffect(() => {
+    authApi.googleStatus()
+      .then(d => setGoogleOk(d.configured))
+      .catch(() => setGoogleOk(false))
+  }, [])
   const navigate = useNavigate()
 
   const handleSubmit = async () => {
@@ -113,7 +120,14 @@ export function AuthPage() {
             ))}
           </div>
 
-          <GoogleButton onClick={authApi.googleLogin} disabled={loading} />
+          {googleOk ? (
+            <GoogleButton onClick={authApi.googleLogin} disabled={loading} />
+          ) : (
+            <p className="text-xs text-amber-400/90 bg-amber-950/30 border border-amber-800/40 rounded-xl px-3 py-2.5 text-center">
+              Google sign-in is not configured. Add <code className="font-mono">GOOGLE_CLIENT_ID</code> and{' '}
+              <code className="font-mono">GOOGLE_CLIENT_SECRET</code> to <code className="font-mono">backend/.env</code>, then restart the backend.
+            </p>
+          )}
           <Divider />
 
           <div className="space-y-3">

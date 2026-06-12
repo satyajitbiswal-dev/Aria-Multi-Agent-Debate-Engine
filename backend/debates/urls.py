@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     DebateListCreateView, DebateDetailView,
-    DebateSuggestionsView,
+    DebateSuggestionsView, DebateExportView,
     DebateImproveTopicView, DebateStanceView,
 )
 
@@ -11,4 +11,5 @@ urlpatterns = [
     path("improve-topic/",      DebateImproveTopicView.as_view(),name="debate-improve-topic"),
     path("<uuid:id>/",          DebateDetailView.as_view(),      name="debate-detail"),
     path("<uuid:id>/stance/",   DebateStanceView.as_view(),      name="debate-stance"),
+    path("<uuid:id>/export/",   DebateExportView.as_view(),      name="debate-export"),
 ]

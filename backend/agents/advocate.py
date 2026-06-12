@@ -30,7 +30,11 @@ class AdvocateState(TypedDict):
     is_rebuttal: bool
     round_number: int
     user_stance: Optional[str]
+    user_thought: Optional[str]
     is_interactive_address: bool
+
+
+WORD_LIMIT = 120
 
 
 search_tool = TavilySearchResults(
@@ -114,24 +118,28 @@ def argue_node(state: AdvocateState) -> AdvocateState:
         ])
 
     user_stance = state.get("user_stance")
+    user_thought = (state.get("user_thought") or "").strip()
     is_interactive = state.get("is_interactive_address", False)
+
+    thought_block = ""
+    if user_thought:
+        thought_block = (
+            f'\n\nThe human audience member wrote:\n"{user_thought}"\n'
+            "Respond directly to their written thoughts — quote or reference their points."
+        )
+
+    limit = f"STRICT LIMIT: maximum {WORD_LIMIT} words. Never exceed {WORD_LIMIT} words."
 
     if is_interactive and user_stance:
         aligned = user_stance == "advocate"
         if aligned:
-            system_prompt = """You are the Advocate speaking DIRECTLY to a human audience member who sided WITH you.
-Your job:
-1. Encourage and validate their choice — tell them they're on the right side
-2. Strengthen their conviction with 2-3 sharp supporting points
-3. Cite sources using [1], [2], [3] notation inline
-Keep under 200 words. Be warm, confident, and personally engaging (use "you")."""
+            system_prompt = f"""You are the Advocate speaking DIRECTLY to a human who sided WITH you.
+Encourage them, validate their choice, and strengthen their conviction with evidence.
+Cite sources using [1], [2], [3] inline. Use "you". {limit}"""
         else:
-            system_prompt = """You are the Advocate speaking DIRECTLY to a human who sided with the CRITIC.
-Your job:
-1. Respectfully acknowledge their position
-2. Try to persuade them to reconsider with 2-3 compelling counter-points
-3. Cite sources using [1], [2], [3] notation inline
-Keep under 200 words. Be persuasive but not condescending (use "you")."""
+            system_prompt = f"""You are the Advocate speaking DIRECTLY to a human who sided with the CRITIC.
+Acknowledge their view, then persuade them to reconsider with sharp counter-points.
+Cite sources using [1], [2], [3] inline. Use "you". {limit}"""
 
         user_prompt = f"""Topic: {topic}
 
@@ -140,50 +148,43 @@ Debate so far:
 
 Evidence:
 {context or 'Use your knowledge.'}
+{thought_block}
 
-Address the human listener directly based on which side they chose."""
+Address the human listener and try to convince them."""
 
     elif is_rebuttal:
-        system_prompt = """You are a skilled debater arguing IN FAVOR of the given topic.
-This is a REBUTTAL round. The Critic has attacked your position.
-Your job:
-1. Directly counter each of the Critic's specific points with evidence
-2. Reinforce your strongest arguments from earlier rounds
-3. Cite sources using [1], [2], [3] notation inline
-Keep your rebuttal under 220 words. Be sharp, specific, and don't repeat yourself."""
-        if user_stance:
-            if user_stance == "advocate":
-                system_prompt += "\n\nA human audience member sided WITH you — briefly encourage them while rebutting."
-            else:
-                system_prompt += "\n\nA human sided with the Critic — try to persuade them while rebutting."
+        system_prompt = f"""You are a skilled debater arguing IN FAVOR of the given topic.
+Rebut the Critic's points with evidence. Cite [1], [2], [3] inline. {limit}"""
+        if user_stance == "advocate":
+            system_prompt += "\nThe human sided WITH you — encourage them while rebutting."
+        elif user_stance == "critic":
+            system_prompt += "\nThe human sided with the Critic — persuade them while rebutting."
 
         user_prompt = f"""Topic: {topic}
 
-Debate history so far:
+Debate history:
 {history_text}
 
-Critic's argument you must rebut:
+Critic's argument:
 {critic_argument}
 
-Supporting evidence:
+Evidence:
 {context or 'Use your knowledge.'}
+{thought_block}
 
-Write a focused rebuttal that directly counters the Critic's points."""
+Write a focused rebuttal."""
 
     else:
-        system_prompt = """You are a skilled debater arguing IN FAVOR of the given topic.
-Your job:
-1. Make 2-3 strong arguments supporting the topic
-2. Cite sources using [1], [2], [3] notation inline
-3. Be persuasive but grounded in evidence
-Keep your argument under 250 words. Be direct and structured."""
+        system_prompt = f"""You are a skilled debater arguing IN FAVOR of the given topic.
+Make 2-3 strong arguments. Cite [1], [2], [3] inline. {limit}"""
 
         user_prompt = f"""Topic: {topic}
 
-Evidence from web search:
-{context or 'Use your knowledge to argue in favor.'}
+Evidence:
+{context or 'Use your knowledge.'}
+{thought_block}
 
-Argue clearly and persuasively IN FAVOR of this topic, citing sources inline."""
+Argue IN FAVOR of this topic."""
 
     llm = ChatOpenAI(
         model="meta-llama/llama-3.3-70b-instruct",

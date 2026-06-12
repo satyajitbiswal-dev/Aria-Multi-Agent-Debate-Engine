@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.http import HttpResponse
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -129,7 +130,7 @@ Respond ONLY in this JSON format:
 class DebateStanceView(APIView):
     """
     POST /api/debates/<id>/stance/
-    Body: { "stance": "advocate" | "critic" }
+    Body: { "stance": "advocate" | "critic", "thought": "optional user text" }
     Submitted after round 1 when interactive_mode is enabled.
     """
     permission_classes = [IsAuthenticated]
@@ -149,12 +150,35 @@ class DebateStanceView(APIView):
         if stance not in ("advocate", "critic"):
             return Response({"error": "Stance must be 'advocate' or 'critic'."}, status=400)
 
+        thought = (request.data.get("thought") or "").strip()[:2000]
+
         debate.user_stance = stance
+        debate.user_thought = thought
         debate.awaiting_stance = False
-        debate.save(update_fields=["user_stance", "awaiting_stance"])
+        debate.save(update_fields=["user_stance", "user_thought", "awaiting_stance"])
 
         from agents.tasks import continue_debate
         continue_debate.delay(str(debate.id))
 
         return Response(DebateSerializer(debate).data)
+
+
+class DebateExportView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, id):
+        try:
+            debate = Debate.objects.prefetch_related("agent_outputs__citations").get(id=id)
+        except Debate.DoesNotExist:
+            return Response({"error": "Debate not found."}, status=404)
+
+        if debate.status != Debate.Status.COMPLETED:
+            return Response({"error": "PDF only available for completed debates."}, status=400)
+
+        from .export import generate_debate_pdf
+        buffer = generate_debate_pdf(debate)
+        safe_topic = debate.topic[:40].replace(" ", "_").replace("/", "-")
+        response = HttpResponse(buffer, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="aria_debate_{safe_topic}.pdf"'
+        return response
 

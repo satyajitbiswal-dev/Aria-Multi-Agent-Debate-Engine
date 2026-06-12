@@ -9,7 +9,6 @@ export function UserMenu() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
@@ -21,6 +20,7 @@ export function UserMenu() {
   if (!user) {
     return (
       <button
+        type="button"
         onClick={() => navigate('/auth')}
         className="text-xs text-gray-400 hover:text-white border border-gray-700
           hover:border-gray-500 px-3 py-1.5 rounded-lg transition-all"
@@ -37,8 +37,9 @@ export function UserMenu() {
     .toUpperCase() || user.email[0].toUpperCase()
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative z-[100]">
       <button
+        type="button"
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-2 group"
       >
@@ -62,27 +63,29 @@ export function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-9 w-52 bg-gray-900 border border-gray-800
-          rounded-xl shadow-2xl shadow-black/50 py-1 z-50 animate-fade-in">
-          <div className="px-3 py-2 border-b border-gray-800">
+        <div className="absolute right-0 top-9 w-52 bg-slate-900 border border-slate-700
+          rounded-xl shadow-2xl shadow-black/60 py-1 z-[200]">
+          <div className="px-3 py-2 border-b border-slate-700">
             <p className="text-xs text-white font-medium truncate">
               {user.first_name && user.last_name
                 ? `${user.first_name} ${user.last_name}`
                 : user.email}
             </p>
-            <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
+            <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
           </div>
           <button
+            type="button"
             onClick={() => { setOpen(false); navigate('/history') }}
-            className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:text-white
-              hover:bg-gray-800 transition-colors"
+            className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:text-white
+              hover:bg-slate-800 transition-colors"
           >
             📋 Debate History
           </button>
           <button
+            type="button"
             onClick={async () => { setOpen(false); await logout(); navigate('/') }}
-            className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-red-400
-              hover:bg-gray-800 transition-colors"
+            className="w-full text-left px-3 py-2 text-xs text-slate-500 hover:text-red-400
+              hover:bg-slate-800 transition-colors"
           >
             Sign out
           </button>

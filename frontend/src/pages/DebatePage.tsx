@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopicInput } from '@/components/TopicInput'
 import { DebateStatusBanner } from '@/components/DebateStatusBanner'
+import { ExportButton } from '@/components/ExportButton'
 import { DebateThread, VoiceSelector } from '@/components/DebateThread'
 import { UserMenu } from '@/components/UserMenu'
 import { InteractiveModeToggle } from '@/components/InteractiveModeToggle'
@@ -78,11 +79,11 @@ export function DebatePage() {
     } finally { setIsLoading(false) }
   }
 
-  const handleStanceSubmit = async (stance: UserStance) => {
+  const handleStanceSubmit = async (stance: UserStance, thought: string) => {
     if (!debateId) return
     setStanceSubmitting(true)
     try {
-      await debatesApi.submitStance(debateId, stance)
+      await debatesApi.submitStance(debateId, stance, thought)
       setAwaitingStance(false)
     } catch (e: any) {
       setError(e?.response?.data?.error || 'Failed to submit stance.')
@@ -99,7 +100,7 @@ export function DebatePage() {
 
   return (
     <div className="app-shell min-h-screen flex flex-col">
-      <header className="border-b border-slate-800/60 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0 backdrop-blur-sm bg-slate-950/40">
+      <header className="relative z-50 border-b border-slate-800/60 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0 bg-slate-950">
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
@@ -167,7 +168,7 @@ export function DebatePage() {
 
         {debateId && (
           <div className="flex flex-col flex-1 min-h-0">
-            <div className="shrink-0 border-b border-slate-800/60 bg-slate-950/60 backdrop-blur px-4 sm:px-6 py-3 space-y-2">
+            <div className="shrink-0 border-b border-slate-800/60 bg-slate-950 px-4 sm:px-6 py-3 space-y-2">
               <div className="flex items-center justify-between gap-4 min-w-0">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -183,6 +184,13 @@ export function DebatePage() {
                   </div>
                   <h2 className="text-sm font-semibold text-white truncate">&ldquo;{currentTopic}&rdquo;</h2>
                 </div>
+                {debateId && (
+                  <ExportButton
+                    debateId={debateId}
+                    topic={currentTopic}
+                    showPdf={debateStatus === 'completed'}
+                  />
+                )}
               </div>
               <DebateStatusBanner status={debateStatus} numRounds={numRounds} currentRound={currentRound} />
             </div>

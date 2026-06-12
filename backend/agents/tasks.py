@@ -56,7 +56,7 @@ def _load_previous_rounds(debate):
     return previous_rounds
 
 
-def _run_advocate_turn(debate, rn, num_rounds, previous_rounds, user_stance=None, is_interactive=False):
+def _run_advocate_turn(debate, rn, num_rounds, previous_rounds, user_stance=None, user_thought="", is_interactive=False):
     from debates.models import AgentOutput
     from agents.advocate import advocate_graph
     from agents.utils import push_status, push_round_start
@@ -83,6 +83,7 @@ def _run_advocate_turn(debate, rn, num_rounds, previous_rounds, user_stance=None
         "is_rebuttal": is_rebuttal,
         "round_number": rn,
         "user_stance": user_stance,
+        "user_thought": user_thought or None,
         "is_interactive_address": is_interactive,
     })
     _save_output(debate, AgentOutput.Role.ADVOCATE, rn, "advocate", adv_result)
@@ -91,7 +92,7 @@ def _run_advocate_turn(debate, rn, num_rounds, previous_rounds, user_stance=None
     return adv_text, previous_rounds
 
 
-def _run_critic_turn(debate, rn, num_rounds, previous_rounds, adv_text, user_stance=None, is_interactive=False):
+def _run_critic_turn(debate, rn, num_rounds, previous_rounds, adv_text, user_stance=None, user_thought="", is_interactive=False):
     from debates.models import AgentOutput
     from agents.critic import critic_graph
     from agents.utils import push_status, push_round_start
@@ -114,6 +115,7 @@ def _run_critic_turn(debate, rn, num_rounds, previous_rounds, adv_text, user_sta
         "is_rebuttal": is_rebuttal,
         "round_number": rn,
         "user_stance": user_stance,
+        "user_thought": user_thought or None,
         "is_interactive_address": is_interactive,
     })
     _save_output(debate, AgentOutput.Role.CRITIC, rn, "critic", crit_result)
@@ -241,6 +243,7 @@ def continue_debate(self, debate_id: str):
         debate = Debate.objects.get(id=debate_id)
         num_rounds = debate.num_rounds
         user_stance = debate.user_stance
+        user_thought = debate.user_thought or ""
 
         if not user_stance:
             raise ValueError("User stance not set.")
@@ -249,25 +252,23 @@ def continue_debate(self, debate_id: str):
         push_status(debate_id, "judge", "Continuing debate with your stance…")
 
         if num_rounds == 1:
-            # Single-round interactive: direct-address exchange
             adv_text, previous_rounds = _run_advocate_turn(
                 debate, 2, num_rounds, previous_rounds,
-                user_stance=user_stance, is_interactive=True,
+                user_stance=user_stance, user_thought=user_thought, is_interactive=True,
             )
             _, previous_rounds = _run_critic_turn(
                 debate, 2, num_rounds, previous_rounds, adv_text,
-                user_stance=user_stance, is_interactive=True,
+                user_stance=user_stance, user_thought=user_thought, is_interactive=True,
             )
         else:
-            # Rounds 2..N with stance-aware prompts
             for rn in range(2, num_rounds + 1):
                 adv_text, previous_rounds = _run_advocate_turn(
                     debate, rn, num_rounds, previous_rounds,
-                    user_stance=user_stance,
+                    user_stance=user_stance, user_thought=user_thought,
                 )
                 _, previous_rounds = _run_critic_turn(
                     debate, rn, num_rounds, previous_rounds, adv_text,
-                    user_stance=user_stance,
+                    user_stance=user_stance, user_thought=user_thought,
                 )
 
         _run_judge(debate, previous_rounds, num_rounds)

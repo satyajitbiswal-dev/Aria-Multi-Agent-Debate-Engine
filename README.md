@@ -230,7 +230,7 @@ ws://localhost:8000/ws/debate/<debate_id>/<advocate|critic|judge>/
 
 ## Real-World Use Cases
 
-- **University summits & competitions** — e.g. IIT Roorkee E-Summit panel debates: two teams argue a startup motion while Aria supplies live research, counter-arguments, and an impartial judge scorecard.
+- **IRMUN & G-Summit conferences** — delegates and startup teams argue motions while Aria scrapes the web for live sources, counter-arguments, and an impartial judge scorecard — no manual research sprint required.
 - **Classroom & moot court prep** — students practice rebuttals against an AI critic with cited sources.
 - **Policy & boardrooms** — stress-test decisions before meetings with adversarial AI analysis.
 - **Media & journalism** — explore both sides of a story with linked evidence.

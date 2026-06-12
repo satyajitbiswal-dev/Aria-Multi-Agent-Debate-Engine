@@ -3,25 +3,26 @@ import { clsx } from 'clsx'
 import type { UserStance } from '@/types'
 
 interface StancePanelProps {
-  onSubmit: (stance: UserStance) => Promise<void>
+  onSubmit: (stance: UserStance, thought: string) => Promise<void>
   isSubmitting?: boolean
 }
 
 export function StancePanel({ onSubmit, isSubmitting = false }: StancePanelProps) {
   const [selected, setSelected] = useState<UserStance | null>(null)
+  const [thought, setThought] = useState('')
 
   const handleConfirm = async () => {
     if (!selected || isSubmitting) return
-    await onSubmit(selected)
+    await onSubmit(selected, thought.trim())
   }
 
   return (
-    <div className="my-4 rounded-2xl border border-indigo-500/30 bg-indigo-950/30 backdrop-blur-sm p-5 animate-slide-up">
+    <div className="my-4 rounded-2xl border border-indigo-500/30 bg-indigo-950/50 p-5 animate-slide-up">
       <div className="text-center mb-4">
         <p className="text-xs font-mono uppercase tracking-widest text-indigo-400 mb-1">Interactive mode</p>
         <h3 className="text-base font-semibold text-white">What&apos;s your take?</h3>
         <p className="text-sm text-slate-400 mt-1">
-          Round 1 is complete. Which side are you on? Agents will respond to your choice.
+          Pick a side and share your thoughts — both agents will read your response and try to convince you.
         </p>
       </div>
 
@@ -57,6 +58,22 @@ export function StancePanel({ onSubmit, isSubmitting = false }: StancePanelProps
           <span className="text-sm font-semibold text-blue-400">Critic</span>
           <span className="text-xs text-slate-500">I oppose the motion</span>
         </button>
+      </div>
+
+      <div className="mt-4">
+        <label className="text-xs text-slate-400 font-medium block mb-1.5">
+          Your thoughts <span className="text-slate-600">(optional)</span>
+        </label>
+        <textarea
+          value={thought}
+          onChange={e => setThought(e.target.value)}
+          disabled={isSubmitting}
+          placeholder="Why do you feel this way? What points convinced you?"
+          rows={3}
+          maxLength={2000}
+          className="w-full bg-slate-900/80 border border-slate-700/60 rounded-xl px-3 py-2.5
+            text-sm text-gray-100 placeholder-slate-500 resize-none focus:outline-none focus:border-indigo-500/50"
+        />
       </div>
 
       <button

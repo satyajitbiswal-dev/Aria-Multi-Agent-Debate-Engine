@@ -22,6 +22,7 @@ class Debate(models.Model):
     num_rounds = models.IntegerField(default=2)
     interactive_mode = models.BooleanField(default=False)
     user_stance      = models.CharField(max_length=10, blank=True, default="")
+    user_thought     = models.TextField(blank=True, default="")
     awaiting_stance  = models.BooleanField(default=False)
     status     = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)

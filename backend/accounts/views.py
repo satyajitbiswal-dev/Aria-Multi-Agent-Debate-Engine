@@ -1,3 +1,5 @@
+import os
+
 from django.contrib.auth import get_user_model
 from django.core import signing
 from rest_framework import status
@@ -57,6 +59,18 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+class GoogleOAuthStatusView(APIView):
+    """GET /api/accounts/google/status/ — whether Google OAuth env vars are set."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        configured = bool(
+            os.getenv("GOOGLE_CLIENT_ID", "").strip()
+            and os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+        )
+        return Response({"configured": configured})
 
 
 class GoogleCallbackView(APIView):

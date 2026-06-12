@@ -31,7 +31,7 @@ INSTALLED_APPS = [
     # Local
     "debates",
     "agents",
-    "accounts",
+    "accounts.apps.AccountsConfig",
 ]
 
 SITE_ID = 1
@@ -122,6 +122,10 @@ ACCOUNT_AUTHENTICATION_METHOD = "email"
 ACCOUNT_EMAIL_VERIFICATION    = "optional"   # change to "mandatory" in prod
 LOGIN_REDIRECT_URL            = "/"
 ACCOUNT_ADAPTER               = "accounts.adapters.AccountAdapter"
+
+# Skip django-allauth's ugly intermediate "Continue" page — go straight to Google
+SOCIALACCOUNT_LOGIN_ON_GET = True
+SOCIALACCOUNT_AUTO_SIGNUP  = True
 
 SOCIALACCOUNT_PROVIDERS = {
     "google": {

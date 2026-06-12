@@ -35,13 +35,18 @@ function renderWithCitations(content: string, citations: Citation[]) {
   })
 }
 
-function HighlightedPlainText({ text, spokenCharIndex }: { text: string; spokenCharIndex: number }) {
-  const spoken = text.slice(0, spokenCharIndex)
-  const unspoken = text.slice(spokenCharIndex)
+function HighlightedWords({ text, spokenWordIndex }: { text: string; spokenWordIndex: number }) {
+  const parts = text.split(/(\s+)/)
+  let wordIdx = 0
   return (
     <>
-      <span className="tts-spoken">{spoken}</span>
-      <span className="tts-unspoken">{unspoken}</span>
+      {parts.map((part, i) => {
+        if (!part.trim()) return <span key={i}>{part}</span>
+        const idx = wordIdx
+        wordIdx += 1
+        const cls = idx <= spokenWordIndex ? 'tts-spoken' : 'tts-unspoken'
+        return <span key={i} className={cls}>{part}</span>
+      })}
     </>
   )
 }
@@ -128,13 +133,13 @@ interface RoundBubbleProps {
   speechId: string
   playingId: string | null
   loadingId: string | null
-  spokenCharIndex: number
+  spokenWordIndex: number
   onToggleSpeech: (id: string, text: string) => void
   stripCitations: (text: string) => string
 }
 
 function RoundBubble({
-  entry, voiceChoice, speechId, playingId, loadingId, spokenCharIndex, onToggleSpeech, stripCitations,
+  entry, voiceChoice, speechId, playingId, loadingId, spokenWordIndex, onToggleSpeech, stripCitations,
 }: RoundBubbleProps) {
   const isAdvocate = entry.role === 'advocate'
   const isPlayingThis = playingId === speechId
@@ -181,7 +186,7 @@ function RoundBubble({
 
         <p className="text-gray-200 whitespace-pre-wrap break-words">
           {isPlayingThis && entry.content ? (
-            <HighlightedPlainText text={cleanText} spokenCharIndex={spokenCharIndex} />
+            <HighlightedWords text={cleanText} spokenWordIndex={spokenWordIndex} />
           ) : (
             renderWithCitations(entry.content, entry.citations)
           )}
@@ -245,13 +250,13 @@ interface JudgePanelProps {
   voiceChoice: 'male' | 'female'
   playingId: string | null
   loadingId: string | null
-  spokenCharIndex: number
+  spokenWordIndex: number
   onToggleSpeech: (id: string, text: string) => void
   stripCitations: (text: string) => string
 }
 
 function JudgePanel({
-  judgeState, scores, voiceChoice, playingId, loadingId, spokenCharIndex, onToggleSpeech, stripCitations,
+  judgeState, scores, voiceChoice, playingId, loadingId, spokenWordIndex, onToggleSpeech, stripCitations,
 }: JudgePanelProps) {
   const isActive = !judgeState.isDone && judgeState.status !== 'Waiting…'
   const hasContent = judgeState.content || scores
@@ -278,9 +283,9 @@ function JudgePanel({
         <div className="mt-3 bg-green-950/20 border border-green-500/15 rounded-xl px-4 py-3">
           <p className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap break-words">
             {isPlayingThis ? (
-              <HighlightedPlainText
+              <HighlightedWords
                 text={stripCitations(judgeState.content)}
-                spokenCharIndex={spokenCharIndex}
+                spokenWordIndex={spokenWordIndex}
               />
             ) : (
               judgeState.content
@@ -349,7 +354,7 @@ interface DebateThreadProps {
 
 export function DebateThread({ thread, judgeState, scores, voiceChoice, stanceSlot }: DebateThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
-  const { playingId, loadingId, spokenCharIndex, toggle, stripCitations } = useSpeech(voiceChoice)
+  const { playingId, loadingId, spokenWordIndex, toggle, stripCitations } = useSpeech(voiceChoice)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -386,7 +391,7 @@ export function DebateThread({ thread, judgeState, scores, voiceChoice, stanceSl
               speechId={speechId}
               playingId={playingId}
               loadingId={loadingId}
-              spokenCharIndex={spokenCharIndex}
+              spokenWordIndex={spokenWordIndex}
               onToggleSpeech={toggle}
               stripCitations={stripCitations}
             />
@@ -401,7 +406,7 @@ export function DebateThread({ thread, judgeState, scores, voiceChoice, stanceSl
         voiceChoice={voiceChoice}
         playingId={playingId}
         loadingId={loadingId}
-        spokenCharIndex={spokenCharIndex}
+        spokenWordIndex={spokenWordIndex}
         onToggleSpeech={toggle}
         stripCitations={stripCitations}
       />

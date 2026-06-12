@@ -46,8 +46,8 @@ export const debatesApi = {
   create: (topic: string, num_rounds = 2, interactive_mode = false) =>
     api.post<Debate>('/api/debates/', { topic, num_rounds, interactive_mode }).then(r => r.data),
 
-  submitStance: (id: string, stance: 'advocate' | 'critic') =>
-    api.post<Debate>(`/api/debates/${id}/stance/`, { stance }).then(r => r.data),
+  submitStance: (id: string, stance: 'advocate' | 'critic', thought = '') =>
+    api.post<Debate>(`/api/debates/${id}/stance/`, { stance, thought }).then(r => r.data),
 
   get: (id: string) =>
     api.get<Debate>(`/api/debates/${id}/`).then(r => r.data),
@@ -85,6 +85,9 @@ export const authApi = {
     api.get<User>('/api/accounts/me/', {
       headers: { Authorization: `Bearer ${token}` }
     }).then(r => r.data),
+
+  googleStatus: () =>
+    api.get<{ configured: boolean }>('/api/accounts/google/status/').then(r => r.data),
 
   googleLogin: () => {
     window.location.href = `${BASE}/accounts/google/login/`

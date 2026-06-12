@@ -28,7 +28,7 @@ class DebateSerializer(serializers.ModelSerializer):
         model  = Debate
         fields = [
             "id", "topic", "num_rounds", "status",
-            "interactive_mode", "user_stance", "awaiting_stance",
+            "interactive_mode", "user_stance", "user_thought", "awaiting_stance",
             "agent_outputs", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "status", "created_at", "updated_at"]
