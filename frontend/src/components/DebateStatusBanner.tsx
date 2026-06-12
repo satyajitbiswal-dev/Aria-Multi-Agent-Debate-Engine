@@ -1,46 +1,56 @@
 import { clsx } from 'clsx'
 import type { DebateStatus } from '@/types'
 
-interface Props { status: DebateStatus }
+interface Props {
+  status: DebateStatus
+  numRounds: number
+  currentRound?: number  // 1-based, passed from WS progress
+}
 
-const PHASES = [
-  { key: 'running',   label: 'Round 1',  sub: 'Advocate opens' },
-  { key: 'round_2',   label: 'Round 2',  sub: 'Critic responds' },
-  { key: 'round_3',   label: 'Round 3',  sub: 'Advocate rebuts' },
-  { key: 'round_4',   label: 'Round 4',  sub: 'Critic closes' },
-  { key: 'judging',   label: 'Judging',  sub: 'Judge deliberates' },
-  { key: 'completed', label: 'Verdict',  sub: 'Debate complete' },
-]
-
-const ORDER = PHASES.map(p => p.key)
-
-export function DebateStatusBanner({ status }: Props) {
+export function DebateStatusBanner({ status, numRounds, currentRound = 1 }: Props) {
   if (status === 'pending' || status === 'failed') return null
-  const currentIndex = ORDER.indexOf(status)
+
+  const isJudging   = status === 'judging'
+  const isCompleted = status === 'completed'
+
+  // Build phase list: [R1, R2, …, RN, Judge, Done]
+  const phases = [
+    ...Array.from({ length: numRounds }, (_, i) => ({
+      key: `round_${i + 1}`,
+      label: `Round ${i + 1}`,
+      sub: i === 0 ? 'Opening' : i === numRounds - 1 ? 'Closing' : 'Rebuttal',
+    })),
+    { key: 'judging',   label: 'Judge',   sub: 'Deliberating' },
+    { key: 'completed', label: 'Verdict', sub: 'Complete' },
+  ]
+
+  // Current phase index
+  let activeIdx: number
+  if (isCompleted)    activeIdx = phases.length - 1
+  else if (isJudging) activeIdx = phases.length - 2
+  else                activeIdx = (currentRound - 1)   // running → show which round
 
   return (
-    <div className="w-full">
-      <div className="flex items-center justify-center gap-0">
-        {PHASES.map((phase, i) => {
-          const phaseIndex = ORDER.indexOf(phase.key)
-          const isDone    = phaseIndex < currentIndex
-          const isActive  = phaseIndex === currentIndex
-          const isPending = phaseIndex > currentIndex
+    <div className="w-full overflow-x-auto">
+      <div className="flex items-center justify-center gap-0 min-w-max mx-auto">
+        {phases.map((phase, i) => {
+          const isDone    = i < activeIdx
+          const isActive  = i === activeIdx
+          const isPending = i > activeIdx
 
           return (
             <div key={phase.key} className="flex items-center">
-              {/* Node */}
-              <div className="flex flex-col items-center gap-1 w-20">
+              <div className="flex flex-col items-center gap-1 w-16">
                 <div className={clsx(
-                  'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300',
+                  'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300',
                   isDone    && 'bg-green-500 text-white',
-                  isActive  && 'bg-white text-gray-900 ring-2 ring-white/30 animate-pulse shadow-lg shadow-white/20',
-                  isPending && 'bg-gray-800 text-gray-600 border border-gray-700',
+                  isActive  && 'bg-white text-gray-900 ring-2 ring-white/30 animate-pulse shadow-white/20 shadow-md',
+                  isPending && 'bg-gray-900 text-gray-700 border border-gray-800',
                 )}>
                   {isDone ? '✓' : i + 1}
                 </div>
                 <span className={clsx(
-                  'text-[10px] font-semibold whitespace-nowrap',
+                  'text-[10px] font-medium whitespace-nowrap',
                   isDone    && 'text-green-400',
                   isActive  && 'text-white',
                   isPending && 'text-gray-700',
@@ -49,19 +59,17 @@ export function DebateStatusBanner({ status }: Props) {
                 </span>
                 <span className={clsx(
                   'text-[9px] whitespace-nowrap hidden sm:block',
-                  isDone    && 'text-green-600',
-                  isActive  && 'text-gray-400',
+                  isDone    && 'text-green-700',
+                  isActive  && 'text-gray-500',
                   isPending && 'text-gray-800',
                 )}>
                   {phase.sub}
                 </span>
               </div>
-
-              {/* Connector */}
-              {i < PHASES.length - 1 && (
+              {i < phases.length - 1 && (
                 <div className={clsx(
-                  'w-6 h-px mb-6 transition-all duration-500',
-                  phaseIndex < currentIndex ? 'bg-green-500' : 'bg-gray-800',
+                  'w-4 h-px mb-5 transition-all duration-500 shrink-0',
+                  i < activeIdx ? 'bg-green-600' : 'bg-gray-800',
                 )} />
               )}
             </div>

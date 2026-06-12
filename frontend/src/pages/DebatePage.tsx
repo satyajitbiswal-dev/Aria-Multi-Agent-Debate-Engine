@@ -10,14 +10,26 @@ import type { DebateStatus } from '@/types'
 
 export function DebatePage() {
   const navigate = useNavigate()
-  const [debateId,     setDebateId]     = useState<string | null>(null)
-  const [currentTopic, setCurrentTopic] = useState('')
-  const [isLoading,    setIsLoading]    = useState(false)
-  const [error,        setError]        = useState('')
-  const [debateStatus, setDebateStatus] = useState<DebateStatus>('pending')
-  const [voice,        setVoice]        = useState<'male' | 'female'>('female')
+  const [debateId,      setDebateId]      = useState<string | null>(null)
+  const [currentTopic,  setCurrentTopic]  = useState('')
+  const [numRounds,     setNumRounds]     = useState(2)
+  const [isLoading,     setIsLoading]     = useState(false)
+  const [error,         setError]         = useState('')
+  const [debateStatus,  setDebateStatus]  = useState<DebateStatus>('pending')
+  const [voice,         setVoice]         = useState<'male' | 'female'>('female')
+
+  // Track which round is currently live (for the banner)
+  const [currentRound, setCurrentRound] = useState(1)
 
   const { judge, scores, thread } = useDebateSocket(debateId)
+
+  // Update currentRound from the thread (highest round that has an active entry)
+  useEffect(() => {
+    const active = thread.filter(e => e.isActive || e.isDone)
+    if (active.length > 0) {
+      setCurrentRound(Math.max(...active.map(e => e.roundNumber)))
+    }
+  }, [thread])
 
   // Poll debate status
   useEffect(() => {
@@ -32,13 +44,15 @@ export function DebatePage() {
     return () => clearInterval(interval)
   }, [debateId])
 
-  const handleStart = async (topic: string) => {
+  const handleStart = async (topic: string, rounds: number) => {
     setIsLoading(true)
     setError('')
     setDebateStatus('pending')
+    setCurrentRound(1)
     try {
-      const debate = await debatesApi.create(topic)
+      const debate = await debatesApi.create(topic, rounds)
       setCurrentTopic(topic)
+      setNumRounds(rounds)
       setDebateId(debate.id)
       setDebateStatus('running')
     } catch (e: any) {
@@ -49,17 +63,18 @@ export function DebatePage() {
   }
 
   const handleReset = () => {
-    setDebateId(null)
-    setCurrentTopic('')
-    setError('')
-    setDebateStatus('pending')
+    setDebateId(null); setCurrentTopic(''); setError('')
+    setDebateStatus('pending'); setCurrentRound(1)
   }
 
   const isTerminal = debateStatus === 'completed' || debateStatus === 'failed'
 
+  const ROUND_COLORS: Record<number, string> = {
+    1: 'text-emerald-400', 2: 'text-blue-400', 3: 'text-purple-400', 4: 'text-orange-400',
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
-      {/* Header */}
       <header className="border-b border-gray-800 px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-xl font-bold text-white tracking-tight">⚡ Aria</span>
@@ -69,16 +84,13 @@ export function DebatePage() {
         </div>
         <div className="flex items-center gap-3">
           {debateId && <VoiceSelector value={voice} onChange={setVoice} />}
-          <button
-            onClick={() => navigate('/history')}
-            className="text-xs text-gray-500 hover:text-white transition-colors"
-          >
+          <button onClick={() => navigate('/history')} className="text-xs text-gray-500 hover:text-white transition-colors">
             History
           </button>
           {debateId && (
             <button
               onClick={handleReset}
-              className="text-xs text-gray-500 hover:text-white transition-colors bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg"
+              className="text-xs text-gray-500 hover:text-white bg-gray-900 hover:bg-gray-800 border border-gray-800 px-3 py-1.5 rounded-lg transition-colors"
             >
               ← New Debate
             </button>
@@ -92,28 +104,9 @@ export function DebatePage() {
           <div className="flex flex-col items-center justify-center flex-1 gap-8 p-6">
             <div className="text-center">
               <h1 className="text-4xl font-bold text-white mb-3">Drop a topic. Watch AI argue.</h1>
-              <p className="text-gray-400 text-lg max-w-xl">
-                Advocate and Critic battle across 4 rounds. A Judge delivers the final verdict.
+              <p className="text-gray-500 text-base max-w-lg">
+                Pick how many rounds you want. Advocate and Critic trade arguments, then a Judge delivers the verdict.
               </p>
-              {/* How it works */}
-              <div className="mt-6 flex items-center justify-center gap-2 text-xs text-gray-600">
-                {[
-                  { icon: '🔴', label: 'Round 1', desc: 'Advocate opens' },
-                  { icon: '🔵', label: 'Round 2', desc: 'Critic responds' },
-                  { icon: '🔴', label: 'Round 3', desc: 'Advocate rebuts' },
-                  { icon: '🔵', label: 'Round 4', desc: 'Critic closes' },
-                  { icon: '⚖️',  label: 'Verdict', desc: 'Judge scores' },
-                ].map((step, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span>{step.icon}</span>
-                      <span className="text-gray-500 font-medium">{step.label}</span>
-                      <span className="text-gray-700">{step.desc}</span>
-                    </div>
-                    {i < 4 && <span className="text-gray-800 mb-4">→</span>}
-                  </div>
-                ))}
-              </div>
             </div>
             <TopicInput onStart={handleStart} isLoading={isLoading} />
             {error && (
@@ -127,18 +120,27 @@ export function DebatePage() {
         {/* Active debate */}
         {debateId && (
           <div className="flex flex-col flex-1 min-h-0">
-            {/* Sticky topic + status bar */}
-            <div className="shrink-0 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur px-6 py-3 flex flex-col gap-2">
+            {/* Sticky header */}
+            <div className="shrink-0 border-b border-gray-800/60 bg-gray-950/95 backdrop-blur px-6 py-3 space-y-2">
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="text-[10px] text-gray-600 uppercase tracking-widest">Debating</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] text-gray-600 uppercase tracking-widest">Debating</p>
+                    <span className={clsx('text-[10px] font-semibold', ROUND_COLORS[numRounds] ?? 'text-gray-400')}>
+                      · {numRounds} round{numRounds !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                   <h2 className="text-sm font-semibold text-white truncate">"{currentTopic}"</h2>
                 </div>
                 {isTerminal && debateId && (
                   <ExportButton debateId={debateId} topic={currentTopic} />
                 )}
               </div>
-              <DebateStatusBanner status={debateStatus} />
+              <DebateStatusBanner
+                status={debateStatus}
+                numRounds={numRounds}
+                currentRound={currentRound}
+              />
             </div>
 
             {/* Scrollable thread */}
@@ -161,4 +163,8 @@ export function DebatePage() {
       </main>
     </div>
   )
+}
+
+function clsx(...args: (string | boolean | undefined | null)[]) {
+  return args.filter(Boolean).join(' ')
 }

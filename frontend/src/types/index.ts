@@ -3,9 +3,6 @@ export type AgentRole = 'advocate' | 'critic' | 'judge'
 export type DebateStatus =
   | 'pending'
   | 'running'
-  | 'round_2'
-  | 'round_3'
-  | 'round_4'
   | 'judging'
   | 'completed'
   | 'failed'
@@ -22,6 +19,7 @@ export interface AgentOutput {
   id: string
   role: AgentRole
   round_number: number
+  turn: string
   content: string
   advocate_score?: number
   critic_score?: number
@@ -35,6 +33,7 @@ export interface AgentOutput {
 export interface Debate {
   id: string
   topic: string
+  num_rounds: number
   status: DebateStatus
   agent_outputs: AgentOutput[]
   created_at: string
@@ -43,22 +42,15 @@ export interface Debate {
 
 // WebSocket message types
 export type WsMessage =
-  | { type: 'connected'; debate_id: string; agent_role: AgentRole }
-  | { type: 'token'; content: string }
-  | { type: 'status'; content: string }
-  | { type: 'citation'; index: number; url: string; title: string; snippet: string }
-  | {
-      type: 'score'
-      advocate_evidence: number
-      critic_evidence: number
-      advocate_logic: number
-      critic_logic: number
-      verdict: string
-    }
+  | { type: 'connected';    debate_id: string; agent_role: AgentRole }
+  | { type: 'token';        content: string }
+  | { type: 'status';       content: string }
+  | { type: 'round_start';  round_number: number; label: string }
+  | { type: 'citation';     index: number; url: string; title: string; snippet: string }
+  | { type: 'score';        advocate_evidence: number; critic_evidence: number; advocate_logic: number; critic_logic: number; verdict: string }
   | { type: 'done' }
-  | { type: 'error'; content: string }
+  | { type: 'error';        content: string }
 
-// Per-agent panel state
 export interface AgentPanelState {
   status: string
   content: string
@@ -76,11 +68,10 @@ export interface JudgeScores {
   verdict: string
 }
 
-// A single round entry in the debate thread
 export interface RoundEntry {
   role: 'advocate' | 'critic'
   roundNumber: number
-  label: string        // e.g. "Round 1" or "Rebuttal"
+  label: string
   content: string
   citations: Citation[]
   isDone: boolean

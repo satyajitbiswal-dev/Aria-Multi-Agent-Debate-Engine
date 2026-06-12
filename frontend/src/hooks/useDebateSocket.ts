@@ -3,131 +3,106 @@ import type { AgentRole, WsMessage, AgentPanelState, JudgeScores, RoundEntry, Ci
 
 const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
 
-const initialPanelState = (): AgentPanelState => ({
-  status: 'Waiting…',
-  content: '',
-  citations: [],
-  isDone: false,
-  hasError: false,
+const initialPanel = (): AgentPanelState => ({
+  status: 'Waiting…', content: '', citations: [], isDone: false, hasError: false,
 })
 
-// Maps debate status → which (role, roundNumber) is currently streaming
-const STATUS_TO_ACTIVE: Record<string, { role: AgentRole; round: number } | null> = {
-  running:   { role: 'advocate', round: 1 },
-  round_2:   { role: 'critic',   round: 2 },
-  round_3:   { role: 'advocate', round: 3 },
-  round_4:   { role: 'critic',   round: 4 },
-  judging:   null,
-  completed: null,
-  failed:    null,
-}
-
-// Round labels
-const ROUND_LABELS: Record<number, string> = {
-  1: 'Opening',
-  2: 'Counter',
-  3: 'Rebuttal',
-  4: 'Final Word',
-}
-
 export function useDebateSocket(debateId: string | null) {
-  const [advocate, setAdvocate] = useState<AgentPanelState>(initialPanelState())
-  const [critic,   setCritic]   = useState<AgentPanelState>(initialPanelState())
-  const [judge,    setJudge]    = useState<AgentPanelState>(initialPanelState())
+  const [advocate, setAdvocate] = useState<AgentPanelState>(initialPanel())
+  const [critic,   setCritic]   = useState<AgentPanelState>(initialPanel())
+  const [judge,    setJudge]    = useState<AgentPanelState>(initialPanel())
   const [scores,   setScores]   = useState<JudgeScores | null>(null)
+  const [thread,   setThread]   = useState<RoundEntry[]>([])
 
-  // Thread holds completed + in-progress rounds in order
-  const [thread, setThread] = useState<RoundEntry[]>([])
+  // Track the current open entry per role (role → {roundNumber, label})
+  const openEntry = useRef<Partial<Record<'advocate' | 'critic', { roundNumber: number; label: string }>>>({})
 
-  // Track which (role,round) pair is currently accumulating
-  const activeEntry = useRef<{ role: AgentRole; round: number } | null>(null)
+  const sockets = useRef<Record<AgentRole, WebSocket | null>>({ advocate: null, critic: null, judge: null })
 
-  const sockets = useRef<Record<AgentRole, WebSocket | null>>({
-    advocate: null,
-    critic: null,
-    judge: null,
-  })
-
-  const setPanel = useCallback((role: AgentRole, updater: (prev: AgentPanelState) => AgentPanelState) => {
-    if (role === 'advocate') setAdvocate(updater)
-    else if (role === 'critic') setCritic(updater)
-    else setJudge(updater)
+  const setPanel = useCallback((role: AgentRole, fn: (p: AgentPanelState) => AgentPanelState) => {
+    if (role === 'advocate') setAdvocate(fn)
+    else if (role === 'critic') setCritic(fn)
+    else setJudge(fn)
   }, [])
 
-  // Upsert a thread entry by (role, roundNumber)
-  const upsertThread = useCallback((role: 'advocate' | 'critic', roundNumber: number, patch: Partial<RoundEntry>) => {
+  const patchThread = useCallback((role: 'advocate' | 'critic', roundNumber: number, patch: Partial<RoundEntry>) => {
     setThread(prev => {
       const idx = prev.findIndex(e => e.role === role && e.roundNumber === roundNumber)
       if (idx === -1) {
-        const newEntry: RoundEntry = {
-          role,
-          roundNumber,
-          label: ROUND_LABELS[roundNumber] ?? `Round ${roundNumber}`,
-          content: '',
-          citations: [],
-          isDone: false,
-          isActive: true,
+        return [...prev, {
+          role, roundNumber,
+          label: patch.label ?? `Round ${roundNumber}`,
+          content: '', citations: [], isDone: false, isActive: true,
           ...patch,
-        }
-        return [...prev, newEntry]
+        } as RoundEntry]
       }
-      const updated = [...prev]
-      updated[idx] = { ...updated[idx], ...patch }
-      return updated
+      const next = [...prev]
+      next[idx] = { ...next[idx], ...patch }
+      return next
+    })
+  }, [])
+
+  const appendToken = useCallback((role: 'advocate' | 'critic', roundNumber: number, token: string) => {
+    setThread(prev => {
+      const idx = prev.findIndex(e => e.role === role && e.roundNumber === roundNumber)
+      if (idx === -1) return prev
+      const next = [...prev]
+      next[idx] = { ...next[idx], content: next[idx].content + token }
+      return next
+    })
+  }, [])
+
+  const addCitation = useCallback((role: 'advocate' | 'critic', roundNumber: number, citation: Citation) => {
+    setThread(prev => {
+      const idx = prev.findIndex(e => e.role === role && e.roundNumber === roundNumber)
+      if (idx === -1) return prev
+      const next = [...prev]
+      const existing = next[idx].citations.filter(c => c.index !== citation.index)
+      next[idx] = { ...next[idx], citations: [...existing, citation].sort((a, b) => a.index - b.index) }
+      return next
     })
   }, [])
 
   const handleMessage = useCallback((role: AgentRole, msg: WsMessage) => {
     switch (msg.type) {
-      case 'status':
-        setPanel(role, prev => ({ ...prev, status: msg.content }))
-        // Parse round number from status message e.g. "Round 3 – Writing argument…"
+
+      case 'round_start':
+        // Backend explicitly signals a new round — open a fresh bubble
         if (role !== 'judge') {
-          const m = msg.content.match(/Round (\d+)/)
-          if (m) {
-            const rn = parseInt(m[1])
-            activeEntry.current = { role: role as 'advocate' | 'critic', round: rn }
-            upsertThread(role as 'advocate' | 'critic', rn, { isActive: true, status: msg.content })
-          }
+          const r = role as 'advocate' | 'critic'
+          openEntry.current[r] = { roundNumber: msg.round_number, label: msg.label }
+          // Mark any previous entry for this role as no longer active
+          setThread(prev => prev.map(e =>
+            e.role === r && e.isActive ? { ...e, isActive: false } : e
+          ))
+          patchThread(r, msg.round_number, { label: msg.label, isActive: true })
         }
+        break
+
+      case 'status':
+        setPanel(role, p => ({ ...p, status: msg.content }))
         break
 
       case 'token':
-        setPanel(role, prev => ({ ...prev, content: prev.content + msg.content }))
-        if (role !== 'judge' && activeEntry.current?.role === role) {
-          const rn = activeEntry.current.round
-          upsertThread(role as 'advocate' | 'critic', rn, {})
-          setThread(prev => {
-            const idx = prev.findIndex(e => e.role === role && e.roundNumber === rn)
-            if (idx === -1) return prev
-            const updated = [...prev]
-            updated[idx] = { ...updated[idx], content: updated[idx].content + msg.content }
-            return updated
-          })
+        setPanel(role, p => ({ ...p, content: p.content + msg.content }))
+        if (role !== 'judge') {
+          const open = openEntry.current[role as 'advocate' | 'critic']
+          if (open) appendToken(role as 'advocate' | 'critic', open.roundNumber, msg.content)
         }
         break
 
-      case 'citation':
-        setPanel(role, prev => ({
-          ...prev,
-          citations: [
-            ...prev.citations.filter(c => c.index !== msg.index),
-            { index: msg.index, url: msg.url, title: msg.title, snippet: msg.snippet },
-          ].sort((a, b) => a.index - b.index),
+      case 'citation': {
+        const citation: Citation = { index: msg.index, url: msg.url, title: msg.title, snippet: msg.snippet }
+        setPanel(role, p => ({
+          ...p,
+          citations: [...p.citations.filter(c => c.index !== msg.index), citation].sort((a, b) => a.index - b.index),
         }))
-        if (role !== 'judge' && activeEntry.current?.role === role) {
-          const rn = activeEntry.current.round
-          const citation: Citation = { index: msg.index, url: msg.url, title: msg.title, snippet: msg.snippet }
-          setThread(prev => {
-            const idx = prev.findIndex(e => e.role === role && e.roundNumber === rn)
-            if (idx === -1) return prev
-            const updated = [...prev]
-            const existing = updated[idx].citations.filter(c => c.index !== msg.index)
-            updated[idx] = { ...updated[idx], citations: [...existing, citation].sort((a,b) => a.index - b.index) }
-            return updated
-          })
+        if (role !== 'judge') {
+          const open = openEntry.current[role as 'advocate' | 'critic']
+          if (open) addCitation(role as 'advocate' | 'critic', open.roundNumber, citation)
         }
         break
+      }
 
       case 'score':
         setScores({
@@ -140,56 +115,39 @@ export function useDebateSocket(debateId: string | null) {
         break
 
       case 'done':
-        setPanel(role, prev => ({ ...prev, isDone: true, status: 'Done' }))
-        if (role !== 'judge' && activeEntry.current?.role === role) {
-          const rn = activeEntry.current.round
-          setThread(prev => {
-            const idx = prev.findIndex(e => e.role === role && e.roundNumber === rn)
-            if (idx === -1) return prev
-            const updated = [...prev]
-            updated[idx] = { ...updated[idx], isDone: true, isActive: false }
-            return updated
-          })
+        setPanel(role, p => ({ ...p, isDone: true, status: 'Done' }))
+        if (role !== 'judge') {
+          const open = openEntry.current[role as 'advocate' | 'critic']
+          if (open) {
+            patchThread(role as 'advocate' | 'critic', open.roundNumber, { isDone: true, isActive: false })
+          }
         }
         break
 
       case 'error':
-        setPanel(role, prev => ({
-          ...prev,
-          hasError: true,
-          errorMessage: msg.content,
-          status: 'Error',
-        }))
+        setPanel(role, p => ({ ...p, hasError: true, errorMessage: msg.content, status: 'Error' }))
         break
     }
-  }, [setPanel, upsertThread])
+  }, [setPanel, patchThread, appendToken, addCitation])
 
   useEffect(() => {
     if (!debateId) return
-    setAdvocate(initialPanelState())
-    setCritic(initialPanelState())
-    setJudge(initialPanelState())
-    setScores(null)
-    setThread([])
-    activeEntry.current = null
+    setAdvocate(initialPanel()); setCritic(initialPanel()); setJudge(initialPanel())
+    setScores(null); setThread([])
+    openEntry.current = {}
 
     const roles: AgentRole[] = ['advocate', 'critic', 'judge']
     roles.forEach(role => {
-      const url = `${WS_BASE}/ws/debate/${debateId}/${role}/`
-      const ws = new WebSocket(url)
-      ws.onopen = () => console.log(`[${role}] WS connected`)
-      ws.onmessage = event => {
-        try {
-          const msg: WsMessage = JSON.parse(event.data)
-          handleMessage(role, msg)
-        } catch (e) {
-          console.error(`[${role}] parse error`, e)
-        }
+      const ws = new WebSocket(`${WS_BASE}/ws/debate/${debateId}/${role}/`)
+      ws.onopen = () => console.log(`[${role}] connected`)
+      ws.onmessage = ev => {
+        try { handleMessage(role, JSON.parse(ev.data)) }
+        catch (e) { console.error(`[${role}] parse error`, e) }
       }
-      ws.onerror = () => setPanel(role, prev => ({
-        ...prev, hasError: true, errorMessage: 'WebSocket connection failed', status: 'Connection error',
+      ws.onerror = () => setPanel(role, p => ({
+        ...p, hasError: true, errorMessage: 'WebSocket connection failed', status: 'Connection error',
       }))
-      ws.onclose = event => console.log(`[${role}] WS closed`, event.code)
+      ws.onclose = ev => console.log(`[${role}] closed`, ev.code)
       sockets.current[role] = ws
     })
 
